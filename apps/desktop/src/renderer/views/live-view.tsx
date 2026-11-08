@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { AppState, RunStep } from "../../shared.ts";
-import { errorMessage } from "../../shared.ts";
 import { Icon } from "../icons.tsx";
 import { Lightbox } from "../lightbox.tsx";
 import type { Navigate } from "../sidebar.tsx";
@@ -41,8 +40,6 @@ export function LiveView({ state, go }: { state: AppState; go: Navigate }) {
 
   const [gaveUp, setGaveUp] = useState(false);
   const [cancelling, setCancelling] = useState(false);
-  const [text, setText] = useState("");
-  const [feedback, setFeedback] = useState("");
   const [shot, setShot] = useState<string | null>(null);
   const listRef = useRef<HTMLOListElement>(null);
 
@@ -98,19 +95,6 @@ export function LiveView({ state, go }: { state: AppState; go: Navigate }) {
     void window.agentApi.cancelTask();
   };
 
-  const send = async (e: Event) => {
-    e.preventDefault();
-    const message = text.trim();
-    if (!message) return;
-    try {
-      const r = await window.agentApi.interject(message);
-      setFeedback(r.ok ? "已发送，下一步生效" : r.message);
-      if (r.ok) setText("");
-    } catch (err) {
-      setFeedback(errorMessage(err));
-    }
-  };
-
   return (
     <div class="live">
       <header class="live-head">
@@ -144,23 +128,6 @@ export function LiveView({ state, go }: { state: AppState; go: Navigate }) {
           </div>
         </div>
       </div>
-
-      <form class="live-compose" onSubmit={send}>
-        <input
-          class="input"
-          placeholder="补充一条指令，Agent 会在下一步看到"
-          disabled={cancelling}
-          value={text}
-          onInput={(e) => {
-            setText(e.currentTarget.value);
-            setFeedback("");
-          }}
-        />
-        <button type="submit" class="btn btn-primary" disabled={cancelling || !text.trim()}>
-          发送
-        </button>
-        {feedback && <span class="live-feedback">{feedback}</span>}
-      </form>
 
       {shot && <Lightbox src={shot} onClose={() => setShot(null)} />}
     </div>

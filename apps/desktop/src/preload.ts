@@ -7,7 +7,6 @@ const api: AgentApi = {
   saveTask: (task) => ipcRenderer.invoke(IPC.saveTask, task),
   deleteTask: (id) => ipcRenderer.invoke(IPC.deleteTask, id),
   runTask: (id) => ipcRenderer.invoke(IPC.runTask, id),
-  interject: (text) => ipcRenderer.invoke(IPC.interject, text),
   retryRun: (runId) => ipcRenderer.invoke(IPC.retryRun, runId),
   deleteRuns: (ids) => ipcRenderer.invoke(IPC.deleteRuns, ids),
   getRun: (id) => ipcRenderer.invoke(IPC.getRun, id),

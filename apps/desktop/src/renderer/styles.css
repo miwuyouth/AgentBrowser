@@ -413,9 +413,9 @@ svg.icon {
 .error-text-inline { color: var(--err); }
 
 /* ============================================================
-   实时视图：左边步骤时间线，右边浏览器当前画面，底部补充指令
+   实时视图：左边步骤时间线，右边浏览器当前画面
    ============================================================ */
-.live { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; height: 100%; }
+.live { display: grid; grid-template-rows: auto minmax(0, 1fr); height: 100%; }
 .live-head { display: flex; align-items: center; gap: 14px; padding: 22px 32px 18px; border-bottom: 1px solid var(--line); }
 .live-head h1 { font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
 .live-status { display: flex; align-items: center; gap: 8px; color: var(--text-2); }
@@ -441,10 +441,6 @@ svg.icon {
 .browser-url { display: block; overflow: hidden; padding: 4px 10px; border-radius: 7px; background: var(--active); color: var(--text-2); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .browser-shot { display: block; width: 100%; cursor: zoom-in; }
 .browser-empty { display: grid; place-items: center; min-height: 280px; color: var(--text-3); }
-
-.live-compose { position: relative; display: flex; gap: 10px; padding: 16px 32px 22px; border-top: 1px solid var(--line); }
-.live-compose .input { flex: 1; height: 40px; border-radius: 11px; }
-.live-feedback { position: absolute; top: 4px; left: 32px; font-size: 12px; color: var(--text-3); }
 
 /* ============================================================
    轻提示

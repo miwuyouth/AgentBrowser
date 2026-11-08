@@ -76,7 +76,7 @@ export class TaskRunner {
     return this.activeRun !== null;
   }
 
-  async runTask(taskId: string, triggerKind = "手动触发", retryFrom?: RunRecord): Promise<void> {
+  async runTask(taskId: string, triggerKind = "手动触发"): Promise<void> {
     if (this.activeRun) {
       throw new Error("已有任务正在执行中，请先等待或停止当前任务。");
     }
@@ -147,8 +147,7 @@ export class TaskRunner {
 
     try {
       // 1. 拉起或连接任务指定的浏览器内核及对应 Profile
-      //    失败重试时优先从上次中断的页面继续（GitHub Actions 式 re-run）
-      const initialUrl = retryFrom?.lastUrl || task.url;
+      const initialUrl = task.url;
       const browserSession = await this.getOrStartBrowser(kernel.id, profile.id, initialUrl);
 
       // 2. 检查模型配置并实例化 Agent
@@ -156,7 +155,7 @@ export class TaskRunner {
       this.currentAgent = agentSession;
 
       // 3. 运行真实 Agent 循环
-      await this.executeRealAgent(task, agentSession, retryFrom);
+      await this.executeRealAgent(task, agentSession);
 
       this.finishTask(task, "ok");
     } catch (err) {
@@ -190,35 +189,7 @@ export class TaskRunner {
     }
   }
 
-  /**
-   * 任务运行中给 Agent 补充一条指令（不打断当前步骤，下一轮模型推断前生效）。
-   * 指令会作为一条「插话」步骤记入运行记录，用户事后能看到自己说过什么。
-   */
-  interject(text: string): { ok: boolean; message: string } {
-    const trimmed = text.trim();
-    if (!trimmed) return { ok: false, message: "指令内容为空。" };
-    if (!this.currentAgent || !this.activeRun) {
-      return { ok: false, message: "当前没有正在运行的任务。" };
-    }
-    try {
-      this.currentAgent.inject(trimmed);
-    } catch {
-      return { ok: false, message: "发送失败，任务可能刚好已结束。" };
-    }
-
-    this.activeRun.steps.push({
-      stepNumber: this.activeRun.steps.length + 1,
-      status: "done",
-      tag: "插话",
-      text: `用户补充指令：${trimmed}`,
-      meta: "下一轮生效",
-    });
-    this.persistRun(false);
-    this.emitEvent({ type: "run_update", run: this.activeRun });
-    return { ok: true, message: "已发送，Agent 将在下一步处理这条指令" };
-  }
-
-  private async executeRealAgent(task: TaskItem, agent: AgentSession, retryFrom?: RunRecord) {
+  private async executeRealAgent(task: TaskItem, agent: AgentSession) {
     if (!this.activeRun) return;
 
     if (this.activeRun.steps[0]) {
@@ -231,16 +202,6 @@ export class TaskRunner {
       task.url ? `起始网址：${task.url}` : "",
       task.doneCondition ? `完成判定条件：${task.doneCondition}` : "",
       task.resultFormat ? `结果格式要求：${task.resultFormat}` : "",
-      retryFrom
-        ? [
-            "这是对上次失败运行的重试。",
-            `上次失败原因：${retryFrom.error || "未知异常"}`,
-            retryFrom.lastUrl ? `上次进行到的页面：${retryFrom.lastUrl}（已作为起始页打开）` : "",
-            "请吸取上次的教训，修正做法后继续完成任务。",
-          ]
-            .filter(Boolean)
-            .join("\n")
-        : "",
     ]
       .filter(Boolean)
       .join("\n");

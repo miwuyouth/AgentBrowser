@@ -364,16 +364,13 @@ function registerIpc() {
     return state();
   });
 
-  // 运行中给 Agent 补充指令（不打断当前步骤）
-  ipcMain.handle(IPC.interject, (_e, text: string) => taskRunner.interject(typeof text === "string" ? text : ""));
-
-  // 从失败的运行记录重试：带上失败原因与最后页面继续
+  // 从失败的运行记录重试：独立重新执行该任务
   ipcMain.handle(IPC.retryRun, (_e, runId: string) => {
     const run = getRunStore().get(runId);
     if (!run || run.status === "run") throw new Error(`未找到可重试的运行记录 #${runId}`);
     if (!run.taskId) throw new Error("这条运行记录没有关联的任务，无法重试。");
     taskRunner
-      .runTask(run.taskId, "失败重试", run)
+      .runTask(run.taskId, "失败重试")
       .catch((err) => emit({ type: "notice", message: errorMessage(err), isError: true }));
     return state();
   });

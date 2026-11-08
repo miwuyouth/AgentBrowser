@@ -202,8 +202,6 @@ export interface AgentApi {
   saveTask(task: Partial<TaskItem>): Promise<TaskItem>;
   deleteTask(id: string): Promise<void>;
   runTask(id: string): Promise<void>;
-  /** 任务运行中给 Agent 补充一条指令（不打断当前步骤） */
-  interject(text: string): Promise<{ ok: boolean; message: string }>;
   /** 从一次失败的运行记录重试：带上失败原因与最后页面继续执行 */
   retryRun(runId: string): Promise<void>;
   /** 删除运行记录，返回实际删除的条数 */
@@ -246,7 +244,6 @@ export const IPC = {
   saveTask: "tasks:save",
   deleteTask: "tasks:delete",
   runTask: "tasks:run",
-  interject: "agent:interject",
   retryRun: "runs:retry",
   deleteRuns: "runs:delete",
   getRun: "runs:get",
