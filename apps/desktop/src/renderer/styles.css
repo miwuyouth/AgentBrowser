@@ -368,8 +368,10 @@ svg.icon {
 .row:hover .row-actions, .row:focus-within .row-actions { opacity: 1; }
 .row-btns { display: inline-flex; align-items: center; gap: 8px; flex: none; }
 .btn-sm { height: 28px; padding: 0 10px; font-size: 12.5px; border-radius: 7px; gap: 6px; }
-/* 「运行」和「运行中 2/4」宽度不同，固定最小宽度让各行的按钮上下对齐 */
-.btn-run { min-width: 92px; font-variant-numeric: tabular-nums; }
+/* 「运行」「运行中」统一宽度让各行按钮上下对齐；多 Profile 的进度显示在名称下的灰字里，不放按钮上 */
+.btn-run { min-width: 92px; }
+/* 运行中用呼吸点替代 ▶，左右留白后和 12px 图标占位一样，文字不跳动 */
+.btn-run .dot { width: 6px; height: 6px; margin: 0 3px; }
 
 .empty { display: grid; justify-items: center; gap: 8px; padding: 72px 24px; border: 1px dashed var(--line-strong); border-radius: var(--radius-lg); text-align: center; }
 .empty h2 { font-size: 16px; font-weight: 600; }

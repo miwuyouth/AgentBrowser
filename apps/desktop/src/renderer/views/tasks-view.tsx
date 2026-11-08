@@ -29,6 +29,13 @@ function profileText(task: TaskItem, state: AppState): string {
     : picked.length > 1
       ? `${picked[0]!.name} 等 ${picked.length} 个 Profile`
       : (picked[0] ?? own.find((p) => p.isDefault) ?? own[0])?.name ?? "运行时自动创建 Profile";
+  return withKernel(name, task, state);
+}
+
+/**
+ * 装了不止一个内核时，在 Profile 文字前加上内核名（每个内核都有一个同名的「主 Profile」）。
+ */
+function withKernel(name: string, task: TaskItem, state: AppState): string {
   const kernelsInUse = new Set(state.profiles.map((p) => p.kernelId)).size;
   if (kernelsInUse <= 1) return name;
   const kernel = state.kernels.find((k) => k.id === task.kernelId)?.name ?? task.kernel;
@@ -36,15 +43,21 @@ function profileText(task: TaskItem, state: AppState): string {
 }
 
 /**
- * 任务正在运行时按钮上的文字。
- * 一轮跑多个 Profile 时带上进度（第几个 / 共几个）。
+ * 任务正在一轮里依次跑多个 Profile 时，名称下那行灰字改成「当前在跑的 Profile（第几个/共几个）」。
+ * 进度放在这里而不放在按钮上，是为了让「运行」「运行中」按钮宽度始终一致、各行上下对齐。
  *
- * @returns 「运行中」「运行中 2/3」，本任务没在运行时为 null
+ * @returns 例如「工作号（2/3）」；本任务没在运行、或这一轮只有一个 Profile 时为 null
  */
-function runningText(task: TaskItem, state: AppState): string | null {
+function runningProfileText(task: TaskItem, state: AppState): string | null {
   const run = state.activeRun;
-  if (!state.running || run?.taskId !== task.id) return null;
-  return run.batch ? `运行中 ${run.batch.index}/${run.batch.total}` : "运行中";
+  if (!state.running || run?.taskId !== task.id || !run.batch) return null;
+  const progress = `（${run.batch.index}/${run.batch.total}）`;
+  return run.profileName ? withKernel(run.profileName, task, state) + progress : profileText(task, state) + progress;
+}
+
+/** 本任务是否正在运行 */
+function isRunning(task: TaskItem, state: AppState): boolean {
+  return state.running && state.activeRun?.taskId === task.id;
 }
 
 /**
@@ -59,9 +72,9 @@ function runningText(task: TaskItem, state: AppState): string | null {
  * 3. 右侧提供"运行"（若当前正在跑该任务则显示为"运行中"并支持直达 LiveView）按钮，处理并发互斥状态（`busy && !running` 时禁用）。
  *
  * @param task 任务实体对象
- * @param profile 该任务所用 Profile 的展示文字
+ * @param profile 名称下那行灰字：平时是所用 Profile，一轮跑多个 Profile 时是当前 Profile 和进度
  * @param busy 当前是否有任何任务在运行中
- * @param running 本任务正在运行时的状态文字（「运行中」或一轮里的「运行中 2/3」）；没在运行为 null
+ * @param running 本任务是否正在运行
  * @param go 路由导航函数
  */
 function TaskRow({
@@ -76,7 +89,7 @@ function TaskRow({
   task: TaskItem;
   profile: string;
   busy: boolean;
-  running: string | null;
+  running: boolean;
   cloning: boolean;
   onClone: (task: TaskItem) => void;
   go: Navigate;
@@ -95,7 +108,9 @@ function TaskRow({
     >
       <div class="row-main">
         <div class="row-name">{task.name}</div>
-        <div class="row-sub" title="运行时使用的 Profile">{profile}</div>
+        <div class="row-sub" title={running ? "正在运行的 Profile" : "运行时使用的 Profile"}>
+          {profile}
+        </div>
       </div>
 
       {scheduled ? (
@@ -137,8 +152,8 @@ function TaskRow({
             }
           }}
         >
-          <Icon name="play" size={12} />
-          {running ?? "运行"}
+          {running ? <span class="dot run" /> : <Icon name="play" size={12} />}
+          {running ? "运行中" : "运行"}
         </button>
       </div>
 
@@ -243,9 +258,9 @@ export function TasksView({ state, go, onOpenSettings }: { state: AppState; go: 
           <TaskRow
             key={t.id}
             task={t}
-            profile={profileText(t, state)}
+            profile={runningProfileText(t, state) ?? profileText(t, state)}
             busy={state.running}
-            running={runningText(t, state)}
+            running={isRunning(t, state)}
             cloning={cloningId === t.id}
             onClone={handleClone}
             go={go}
