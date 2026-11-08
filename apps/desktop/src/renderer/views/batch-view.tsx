@@ -2,7 +2,7 @@ import { summarizeBatch } from "../../batch.ts";
 import type { AppState, RunSummary } from "../../shared.ts";
 import { confirmDialog } from "../confirm.tsx";
 import { Icon } from "../icons.tsx";
-import { PageHead } from "../page.tsx";
+import { BackButton, PageHead } from "../page.tsx";
 import type { Navigate } from "../sidebar.tsx";
 import { formatDateTime, formatDuration } from "../time.ts";
 
@@ -55,17 +55,10 @@ function ProfileRunRow({ run, go }: { run: RunSummary; go: Navigate }) {
 export function BatchView({ state, batchId, go }: { state: AppState; batchId: string | undefined; go: Navigate }) {
   const runs = state.runs.filter((r) => r.batch?.id === batchId);
 
-  const back = (
-    <button type="button" class="back" onClick={() => go("runs")}>
-      <Icon name="back" size={14} />
-      运行记录
-    </button>
-  );
-
   if (runs.length === 0) {
     return (
       <div class="page">
-        {back}
+        <BackButton />
         <div class="empty">
           <h2>找不到这一轮的记录</h2>
           <p>它可能已经被删除了。</p>
@@ -113,7 +106,7 @@ export function BatchView({ state, batchId, go }: { state: AppState; batchId: st
 
   return (
     <div class="page">
-      {back}
+      <BackButton />
       <PageHead title={batch.name} desc={meta}>
         <span class="head-actions">
           {batch.fail > 0 && !batch.running && (

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "preact/hooks";
 import type { AppState, RunRecord } from "../../shared.ts";
 import { Icon } from "../icons.tsx";
-import { PageHead } from "../page.tsx";
+import { BackButton, PageHead } from "../page.tsx";
 import { Lightbox } from "../lightbox.tsx";
 import { RunLog } from "../run-log.tsx";
 import { ShotGallery } from "../shot-gallery.tsx";
@@ -51,24 +51,18 @@ export function RunDetailView({ state, runId, go }: { state: AppState; runId: st
 
   // 还在运行的记录没有"结果"可看，去实时视图
   useEffect(() => {
-    if (summary?.status === "run") go("live", summary.id);
+    if (summary?.status === "run") go("live", summary.id, { replace: true });
   }, [summary?.status]);
 
   // 属于一轮的运行，返回这一轮的页面
   const batchId = summary?.batch?.id ?? run?.batch?.id;
-  const back = (
-    <button type="button" class="back" onClick={() => (batchId ? go("batch", batchId) : go("runs"))}>
-      <Icon name="back" size={14} />
-      {batchId ? "这一轮" : "运行记录"}
-    </button>
-  );
 
   if (run === undefined) return null; // 正在读取
 
   if (!run) {
     return (
       <div class="page">
-        {back}
+        <BackButton />
         <div class="empty">
           <h2>找不到这条记录</h2>
           <p>它可能已经被删除了。</p>
@@ -111,13 +105,13 @@ export function RunDetailView({ state, runId, go }: { state: AppState; runId: st
     const ok = await confirmDialog({ title: "删除这条运行记录？", detail: "运行步骤和截图会一并删除，无法恢复。", confirmLabel: "删除", danger: true });
     if (!ok) return;
     await window.agentApi.deleteRuns([run.id]);
-    if (batchId) go("batch", batchId);
+    if (batchId) go("batch", batchId, { replace: true });
     else go("runs");
   };
 
   return (
     <div class="page">
-      {back}
+      <BackButton />
       <PageHead title={run.name} desc={meta}>
         <span class="head-actions">
           {failed && (

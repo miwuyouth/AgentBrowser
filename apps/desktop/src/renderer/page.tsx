@@ -1,4 +1,6 @@
-import type { ComponentChildren } from "preact";
+import { createContext, type ComponentChildren } from "preact";
+import { useContext } from "preact/hooks";
+import { Icon } from "./icons.tsx";
 
 /**
  * 通用页面头部标题栏组件。
@@ -24,5 +26,32 @@ export function PageHead({ title, desc, children }: { title: string; desc?: stri
       </div>
       {children}
     </header>
+  );
+}
+
+/** 「< 返回」要回到的上一页：显示的文字和点击后的动作 */
+export interface BackTarget {
+  label: string;
+  onBack: () => void;
+}
+
+/** 由 `app.tsx` 的 `Main` 根据导航历史提供；顶级页面没有上一页时为 null */
+export const BackContext = createContext<BackTarget | null>(null);
+
+/**
+ * 页面左上角的「< 上一页」返回按钮。
+ *
+ * 【调用时机】在所有二级页面（编辑任务、运行详情、这一轮、实时运行等）的顶部渲染。
+ * 【作用】回到真正的上一页（按导航历史）；没有历史时（如从系统通知直接打开）回到所属的上级页面；
+ * 顶级页面没有上一页，不渲染任何内容。
+ */
+export function BackButton() {
+  const back = useContext(BackContext);
+  if (!back) return null;
+  return (
+    <button type="button" class="back" title="返回上一页（⌘[）" onClick={back.onBack}>
+      <Icon name="back" size={14} />
+      {back.label}
+    </button>
   );
 }

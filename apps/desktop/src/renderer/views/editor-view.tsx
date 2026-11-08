@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { AUTO_PROFILE_LABEL, errorMessage, makeCloneName, type AppState, type FormField } from "../../shared.ts";
 import { Icon } from "../icons.tsx";
-import { PageHead } from "../page.tsx";
+import { BackButton, PageHead } from "../page.tsx";
 import { toast } from "../toast.tsx";
 import { nextSlot, scheduleLabel, type RepeatKind } from "../../schedule.ts";
 import type { Navigate } from "../sidebar.tsx";
@@ -130,6 +130,7 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
   if (taskId && !task) {
     return (
       <div class="page">
+        <BackButton />
         <div class="empty">
           <h2>找不到这个任务</h2>
           <p>它可能已经被删除了。</p>
@@ -230,7 +231,8 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
       });
       if (thenRun) {
         void window.agentApi.runTask(saved.id);
-        go("live");
+        // 替换掉编辑页：从实时运行返回时回到进编辑页之前的页面，而不是一张已保存的表单
+        go("live", undefined, { replace: true });
       } else {
         go("tasks");
       }
@@ -311,6 +313,7 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
   return (
     <div class="editor">
       <div class="page">
+        <BackButton />
         <PageHead title={task ? "编辑任务" : "新建任务"} desc="用一句话告诉 Agent 要做什么">
           {task && (
             <button

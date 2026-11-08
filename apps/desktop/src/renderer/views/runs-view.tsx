@@ -1,7 +1,7 @@
 import { groupRuns, type BatchInfo } from "../../batch.ts";
 import type { AppState, RunSummary } from "../../shared.ts";
 import { Icon } from "../icons.tsx";
-import { PageHead } from "../page.tsx";
+import { BackButton, PageHead } from "../page.tsx";
 import type { Navigate } from "../sidebar.tsx";
 import { formatRelative } from "../time.ts";
 
@@ -103,6 +103,7 @@ export function RunsView({ state, taskId, go }: { state: AppState; taskId: strin
 
   return (
     <div class="page">
+      <BackButton />
       <PageHead title="运行记录" desc={`${items.length} 条记录`}>
         {task && (
           <span class="filter-tag">

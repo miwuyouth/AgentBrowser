@@ -20,10 +20,15 @@ export type View = "tasks" | "editor" | "runs" | "run" | "batch" | "live" | "env
  * - batch: 传递一轮的 ID 表示进入这一轮的页面（多 Profile 任务每个 Profile 各一条记录）；
  * - live: 切换到实时监控正在运行的任务。
  *
+ * 每次跳转都会记入历史，供页面左上角的「< 返回」回到上一页；
+ * 跳到顶级页面（任务、运行记录、运行环境）时清空历史。
+ *
  * @param view 目标视图名称
  * @param id 目标业务实体的唯一 ID（可选）
+ * @param opts.replace 替换当前页而不记入历史：用于自动跳转（运行结束、记录被删除等），避免「返回」回到已失效的页面
+ * @param opts.reset 清空历史再跳转：用于从系统通知等外部入口直接打开某页
  */
-export type Navigate = (view: View, id?: string) => void;
+export type Navigate = (view: View, id?: string, opts?: { replace?: boolean; reset?: boolean }) => void;
 
 /**
  * 视图所有者映射表。

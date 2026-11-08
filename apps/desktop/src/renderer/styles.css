@@ -386,6 +386,7 @@ svg.icon {
    ============================================================ */
 .back { display: inline-flex; align-items: center; gap: 4px; margin: 0 0 14px -4px; padding: 2px 6px 2px 2px; border: 0; border-radius: 6px; background: none; color: var(--text-2); }
 .back:hover { background: var(--hover); color: var(--text); }
+.live-head .back { margin: 0 -4px 0 -4px; }
 .head-actions { display: flex; align-items: center; gap: 8px; }
 .card { border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow); }
 .section { margin-bottom: 20px; }

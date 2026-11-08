@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { AppState, RunStep } from "../../shared.ts";
 import { Icon } from "../icons.tsx";
 import { Lightbox } from "../lightbox.tsx";
+import { BackButton } from "../page.tsx";
 import type { Navigate } from "../sidebar.tsx";
 import { shotUrl } from "../shots.ts";
 import { describeStep, shortUrl, visibleSteps } from "../step-format.ts";
@@ -90,8 +91,8 @@ export function LiveView({ state, go }: { state: AppState; go: Navigate }) {
   // 一轮里两个 Profile 之间运行器仍在忙，不算结束
   useEffect(() => {
     if (run || state.running || !seenRunId.current) return;
-    if (seenBatchId.current) go("batch", seenBatchId.current);
-    else go("run", seenRunId.current);
+    if (seenBatchId.current) go("batch", seenBatchId.current, { replace: true });
+    else go("run", seenRunId.current, { replace: true });
   }, [run?.id, state.running]);
 
   // 点了运行却一直没有开始（例如启动失败，原因会以提示条显示）：别让用户一直干等
@@ -122,6 +123,7 @@ export function LiveView({ state, go }: { state: AppState; go: Navigate }) {
   if (!run) {
     return (
       <div class="page">
+        <BackButton />
         <div class="empty">
           {seenRunId.current || !gaveUp ? (
             <>
@@ -161,6 +163,7 @@ export function LiveView({ state, go }: { state: AppState; go: Navigate }) {
   return (
     <div class="live">
       <header class="live-head">
+        <BackButton />
         <h1>{run.name}</h1>
         <span class="live-status">
           <i class="dot run" />
