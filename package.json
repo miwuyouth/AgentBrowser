@@ -12,7 +12,7 @@
     "dev": "pnpm --filter @agent-browser/desktop run dev",
     "package": "pnpm build && pnpm --filter @agent-browser/desktop run package",
     "dist": "pnpm build && pnpm --filter @agent-browser/desktop run dist",
-    "test": "tsx apps/desktop/src/form-extract.test.ts && tsx apps/desktop/src/scheduler.test.ts && tsx apps/desktop/src/run-stop.test.ts && tsx apps/desktop/src/defaults.test.ts && tsx apps/desktop/src/run-store.test.ts && tsx apps/desktop/src/model-probe.test.ts && tsx apps/desktop/src/background.test.ts"
+    "test": "tsx apps/desktop/src/task-clone.test.ts && tsx apps/desktop/src/form-extract.test.ts && tsx apps/desktop/src/scheduler.test.ts && tsx apps/desktop/src/run-stop.test.ts && tsx apps/desktop/src/defaults.test.ts && tsx apps/desktop/src/run-store.test.ts && tsx apps/desktop/src/model-probe.test.ts && tsx apps/desktop/src/background.test.ts"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",

@@ -390,6 +390,8 @@ export interface AgentApi {
   testModel(req: ModelProbeRequest): Promise<ModelTestResult>;
   /** 新建或更新保存任务 */
   saveTask(task: Partial<TaskItem>): Promise<TaskItem>;
+  /** 克隆指定 ID 的任务并持久化生成新副本 */
+  cloneTask(id: string): Promise<TaskItem>;
   /** 删除指定 ID 的任务 */
   deleteTask(id: string): Promise<void>;
   /** 立即触发运行指定任务 */
@@ -456,6 +458,93 @@ export const AUTO_PROFILE_VALUE = "__auto__";
  */
 export const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
+/**
+ * 根据已有任务名称列表，为被克隆的任务生成规范且不重复的副本名称。
+ *
+ * 【命名规则】
+ * - 首次克隆：「任务名」->「任务名 (副本)」
+ * - 再次克隆：「任务名 (副本)」->「任务名 (副本 2)」
+ * - 继续克隆：「任务名 (副本 2)」->「任务名 (副本 3)」
+ * - 兼容中英文括号及空格变体，如「任务名 副本」、「任务名（副本）」等。
+ *
+ * @param baseName 原始任务名称
+ * @param existingNames 当前所有已有任务的名称数组
+ * @returns 保证在 existingNames 中不存在的全新名称
+ */
+export function makeCloneName(baseName: string, existingNames: string[]): string {
+  const trimmed = baseName?.trim() || "新任务";
+  const nameSet = new Set(existingNames);
+
+  // 提取原始名称主体（去除末尾可能已有的 副本 标记）
+  const copyRegex = /^(.*?)(?:[（(]\s*副本(?:\s*(\d+))?\s*[）)]|\s+副本(?:\s*(\d+))?)$/;
+  const match = trimmed.match(copyRegex);
+  const root = (match && match[1]?.trim()) ? match[1].trim() : trimmed;
+
+  // 检查某种编号的副本变体（如带括号、不带括号、全角括号）是否已存在
+  const isTaken = (num?: number) => {
+    if (!num) {
+      return (
+        nameSet.has(`${root} (副本)`) ||
+        nameSet.has(`${root} 副本`) ||
+        nameSet.has(`${root}（副本）`)
+      );
+    }
+    return (
+      nameSet.has(`${root} (副本 ${num})`) ||
+      nameSet.has(`${root} 副本 ${num}`) ||
+      nameSet.has(`${root}（副本 ${num}）`)
+    );
+  };
+
+  if (!isTaken()) {
+    return `${root} (副本)`;
+  }
+
+  let index = 2;
+  while (isTaken(index)) {
+    index++;
+  }
+  return `${root} (副本 ${index})`;
+}
+
+/**
+ * 完整克隆一个任务对象，分配新的唯一 ID 并重置执行状态。
+ *
+ * 【调用时机】
+ * 主进程处理 `IPC.cloneTask` 或需要深拷贝任务时调用。
+ *
+ * 【作用】
+ * 1. 生成唯一的不重复名称（如「xxx (副本)」）；
+ * 2. 赋予全新的任务 ID 与表单字段 ID；
+ * 3. 复制完整的核心执行配置（内核、Profile、调度规则、表单字段、超时限制等）；
+ * 4. 重置最近运行状态为未执行状态（none）。
+ *
+ * @param source 源任务对象
+ * @param existingNames 当前系统中所有已有任务名称
+ * @returns 克隆后的全新任务对象
+ */
+export function cloneTaskItem(source: TaskItem, existingNames: string[]): TaskItem {
+  const name = makeCloneName(source.name, existingNames);
+  const now = Date.now();
+  const rand = Math.random().toString(36).slice(2, 6);
+  const fields = source.fields?.map((f) => ({
+    ...f,
+    id: `f-${now}-${Math.random().toString(36).slice(2, 6)}`,
+  }));
+
+  return {
+    ...source,
+    id: `task-${now}-${rand}`,
+    name,
+    fields,
+    lastStatus: "none",
+    lastRunTime: "—",
+    lastDuration: "—",
+    lastScheduledAt: now,
+    updatedAt: now,
+  };
+}
+
 /** Electron IPC 通道名称常量集合 */
 export const IPC = {
   getState: "app:get-state",
@@ -464,6 +553,7 @@ export const IPC = {
   listModels: "settings:list-models",
   testModel: "settings:test-model",
   saveTask: "tasks:save",
+  cloneTask: "tasks:clone",
   deleteTask: "tasks:delete",
   runTask: "tasks:run",
   retryRun: "runs:retry",

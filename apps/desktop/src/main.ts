@@ -41,6 +41,7 @@ import {
 import {
   AUTO_PROFILE_LABEL,
   IPC,
+  cloneTaskItem,
   errorMessage,
   lightRun,
   type AppState,
@@ -779,6 +780,19 @@ function registerIpc() {
     if (!autoProfile && profile) saveDefaultProfile(profile.id);
     pushState();
     return taskData;
+  });
+
+  ipcMain.handle(IPC.cloneTask, (_e, id: string) => {
+    const tasks = loadTasks();
+    const source = tasks.find((t) => t.id === id);
+    if (!source) {
+      throw new Error(`找不到要克隆的任务（ID: ${id}）`);
+    }
+    const newTask = cloneTaskItem(source, tasks.map((t) => t.name));
+    tasks.unshift(newTask);
+    saveTasks(tasks);
+    pushState();
+    return newTask;
   });
 
   ipcMain.handle(IPC.deleteTask, (_e, id: string) => {

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "preact/hooks";
-import { AUTO_PROFILE_LABEL, AUTO_PROFILE_VALUE, errorMessage, type AppState, type FormField } from "../../shared.ts";
+import { AUTO_PROFILE_LABEL, AUTO_PROFILE_VALUE, errorMessage, makeCloneName, type AppState, type FormField } from "../../shared.ts";
 import { Icon } from "../icons.tsx";
 import { PageHead } from "../page.tsx";
+import { toast } from "../toast.tsx";
 import { nextSlot, scheduleLabel, type RepeatKind } from "../../schedule.ts";
 import type { Navigate } from "../sidebar.tsx";
 import { formatUpcoming } from "../time.ts";
@@ -219,6 +220,58 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
   };
 
   /**
+   * 克隆当前正在编辑的任务为新任务。
+   *
+   * 【调用时机】
+   * 用户在编辑任务页点击头部"克隆任务"或底部"克隆此任务"时调用。
+   *
+   * 【作用】
+   * 1. 根据当前表单填写的配置（若已调整）生成带有「副本」后缀的唯一新名称；
+   * 2. 调用 IPC `window.agentApi.saveTask`（不传 id）创建全新的任务实体；
+   * 3. 弹出 Toast 提示并自动导航至新克隆任务的编辑界面。
+   */
+  const clone = async () => {
+    if (!task || !canSave) return;
+    setSaving(true);
+    setError("");
+    try {
+      const autoProfile = profileValue === AUTO_PROFILE_VALUE;
+      const cloneName = makeCloneName(name.trim() || task.name, state.tasks.map((t) => t.name));
+      const saved = await window.agentApi.saveTask({
+        name: cloneName,
+        goal: goal.trim(),
+        url: url.trim(),
+        doneCondition: doneCondition.trim(),
+        fields: fields
+          .map((f) => ({
+            ...f,
+            id: `f-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            name: f.name.trim().slice(0, 30),
+            description: f.description?.trim().slice(0, 120) || undefined,
+          }))
+          .filter((f) => f.name !== ""),
+        maxSteps: stepsValue!,
+        timeoutMinutes: timeoutValue!,
+        kernelId,
+        autoProfile,
+        ...(autoProfile ? {} : { profileId: profileValue }),
+        autoClose: closeAfter,
+        headless,
+        ...(scheduled
+          ? { mode: "cron" as const, repeatKind: repeat, repeatTime: time, schedule: scheduleLabel(repeat, time) }
+          : { mode: "now" as const, repeatKind: "manual" as const, schedule: "手动" }),
+      });
+      toast(`已克隆任务「${saved.name}」`);
+      go("editor", saved.id);
+    } catch (err) {
+      setError(errorMessage(err));
+      toast(`克隆失败：${errorMessage(err)}`, true);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  /**
    * 删除当前编辑的任务。
    *
    * 【调用时机】
@@ -238,7 +291,20 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
   return (
     <div class="editor">
       <div class="page">
-        <PageHead title={task ? "编辑任务" : "新建任务"} desc="用一句话告诉 Agent 要做什么" />
+        <PageHead title={task ? "编辑任务" : "新建任务"} desc="用一句话告诉 Agent 要做什么">
+          {task && (
+            <button
+              type="button"
+              class="btn btn-sm"
+              disabled={!canSave}
+              title={blocker || "以此任务为模板克隆一个新任务"}
+              onClick={() => void clone()}
+            >
+              <Icon name="copy" size={13} />
+              克隆任务
+            </button>
+          )}
+        </PageHead>
 
         <div class="card">
           <div class="goal">
@@ -468,9 +534,20 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
         </div>
 
         {task && (
-          <button type="button" class="link-btn danger" onClick={remove}>
-            删除这个任务
-          </button>
+          <div class="editor-foot-links">
+            <button
+              type="button"
+              class="link-btn"
+              disabled={!canSave}
+              title={blocker || "以此任务为模板克隆一个新任务"}
+              onClick={() => void clone()}
+            >
+              克隆此任务
+            </button>
+            <button type="button" class="link-btn danger" onClick={remove}>
+              删除这个任务
+            </button>
+          </div>
         )}
       </div>
 

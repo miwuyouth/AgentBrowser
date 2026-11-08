@@ -48,6 +48,12 @@ const api: AgentApi = {
   saveTask: (task) => ipcRenderer.invoke(IPC.saveTask, task),
 
   /**
+   * 【调用时机】用户在任务列表或任务编辑页点击"克隆任务"时调用。
+   * 【作用】通知主进程克隆指定 ID 的任务配置，生成新副本并持久化到 tasks.json，返回克隆后的新任务对象。
+   */
+  cloneTask: (id) => ipcRenderer.invoke(IPC.cloneTask, id),
+
+  /**
    * 【调用时机】用户在任务列表右侧操作区或任务编辑页点击删除并确认时调用。
    * 【作用】通知主进程从 tasks.json 中永久移除指定 ID 的任务。
    */

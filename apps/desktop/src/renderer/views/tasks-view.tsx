@@ -1,8 +1,10 @@
-import type { AppState, TaskItem } from "../../shared.ts";
+import { useState } from "preact/hooks";
+import { errorMessage, type AppState, type TaskItem } from "../../shared.ts";
 import { isScheduled, scheduleLabel } from "../../schedule.ts";
 import { Icon } from "../icons.tsx";
 import { getReadiness } from "../readiness.ts";
 import { PageHead } from "../page.tsx";
+import { toast } from "../toast.tsx";
 import type { Navigate } from "../sidebar.tsx";
 
 /**
@@ -52,12 +54,16 @@ function TaskRow({
   profile,
   busy,
   running,
+  cloning,
+  onClone,
   go,
 }: {
   task: TaskItem;
   profile: string;
   busy: boolean;
   running: boolean;
+  cloning: boolean;
+  onClone: (task: TaskItem) => void;
   go: Navigate;
 }) {
   const open = () => go("editor", task.id);
@@ -86,24 +92,40 @@ function TaskRow({
         <span class="row-kind">手动</span>
       )}
 
-      <button
-        type="button"
-        class="btn btn-sm"
-        disabled={busy && !running}
-        title={busy && !running ? "已有任务正在运行" : running ? "查看实时运行" : undefined}
-        onClick={(e) => {
-          e.stopPropagation();
-          if (running) {
-            go("live");
-          } else {
-            void window.agentApi.runTask(task.id);
-            go("live");
-          }
-        }}
-      >
-        <Icon name="play" size={12} />
-        {running ? "运行中" : "运行"}
-      </button>
+      <div class="row-btns">
+        <button
+          type="button"
+          class="btn btn-sm"
+          disabled={cloning}
+          title="克隆这个任务"
+          onClick={(e) => {
+            e.stopPropagation();
+            onClone(task);
+          }}
+        >
+          <Icon name="copy" size={12} />
+          克隆
+        </button>
+
+        <button
+          type="button"
+          class="btn btn-sm"
+          disabled={busy && !running}
+          title={busy && !running ? "已有任务正在运行" : running ? "查看实时运行" : undefined}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (running) {
+              go("live");
+            } else {
+              void window.agentApi.runTask(task.id);
+              go("live");
+            }
+          }}
+        >
+          <Icon name="play" size={12} />
+          {running ? "运行中" : "运行"}
+        </button>
+      </div>
 
       <Icon name="chevron" size={14} />
     </li>
@@ -163,8 +185,23 @@ function SetupHint({ state, go, onOpenSettings }: { state: AppState; go: Navigat
  * @param onOpenSettings 唤起设置弹窗回调
  */
 export function TasksView({ state, go, onOpenSettings }: { state: AppState; go: Navigate; onOpenSettings: () => void }) {
+  const [cloningId, setCloningId] = useState<string | null>(null);
+
   // 最近改动的排在最前
   const tasks = [...state.tasks].sort((a, b) => b.updatedAt - a.updatedAt);
+
+  const handleClone = async (task: TaskItem) => {
+    if (cloningId) return;
+    setCloningId(task.id);
+    try {
+      const cloned = await window.agentApi.cloneTask(task.id);
+      toast(`已克隆任务「${cloned.name}」`);
+    } catch (err) {
+      toast(`克隆失败：${errorMessage(err)}`, true);
+    } finally {
+      setCloningId(null);
+    }
+  };
 
   if (tasks.length === 0) {
     return (
@@ -194,6 +231,8 @@ export function TasksView({ state, go, onOpenSettings }: { state: AppState; go: 
             profile={profileText(t, state)}
             busy={state.running}
             running={state.activeRun?.taskId === t.id}
+            cloning={cloningId === t.id}
+            onClone={handleClone}
             go={go}
           />
         ))}

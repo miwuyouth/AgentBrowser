@@ -362,6 +362,7 @@ svg.icon {
 /* 运行、编辑只在悬停或键盘聚焦时出现，平时行里只有名称和状态 */
 .row-actions { display: flex; align-items: center; gap: 4px; opacity: 0; transition: opacity 0.12s ease; }
 .row:hover .row-actions, .row:focus-within .row-actions { opacity: 1; }
+.row-btns { display: inline-flex; align-items: center; gap: 8px; flex: none; }
 .btn-sm { height: 28px; padding: 0 10px; font-size: 12.5px; border-radius: 7px; gap: 6px; }
 
 .empty { display: grid; justify-items: center; gap: 8px; padding: 72px 24px; border: 1px dashed var(--line-strong); border-radius: var(--radius-lg); text-align: center; }
@@ -526,6 +527,9 @@ svg.icon {
 
 @keyframes fade-in { from { opacity: 0; transform: translateY(-4px); } }
 
+.editor-foot-links { display: flex; align-items: center; justify-content: space-between; margin-top: 28px; }
+.editor-foot-links .link-btn { font-size: 13px; }
+.editor-foot-links .link-btn.danger { margin: 0; }
 .link-btn.danger { display: block; margin: 28px 0 0 auto; color: var(--err); }
 .link-btn.danger:hover { color: var(--err); opacity: 0.8; }
 
