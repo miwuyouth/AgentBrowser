@@ -561,6 +561,26 @@ async function closeCurrentBrowser(): Promise<void> {
   } catch {}
 }
 
+/** 当前浏览器实例是否正是目标内核、Profile 和窗口模式，可以直接复用 */
+function isSameBrowser(session: BrowserSession, kernelId: string, profileDir: string, headless: boolean): boolean {
+  const b = session.browser;
+  return b.kernelId === kernelId && b.userDataDir === profileDir && b.headless === headless;
+}
+
+/**
+ * 手动打开 / 测试浏览器前检查：任务正在使用的浏览器如果不能直接复用，就不能被关掉换成别的实例。
+ * 后台（无头）运行的任务没有窗口，用户打开同一个 Profile 会需要重启浏览器，这里直接拦下并说明原因。
+ */
+function assertBrowserNotBusy(kernelId: string, profileDir: string): void {
+  if (!taskRunner?.isRunning() || !browser || browserStatus !== "connected") return;
+  if (isSameBrowser(browser, kernelId, profileDir, false)) return;
+  throw new Error(
+    browser.browser.headless
+      ? "有任务正在后台运行，占用着浏览器。请等它结束或先停止，再打开浏览器。"
+      : "有任务正在使用另一个浏览器，请等它结束或先停止，再打开浏览器。",
+  );
+}
+
 /**
  * 启动指定内核与对应 Profile 的浏览器进程，并等待自研扩展通过 WebSocket 连接。
  *
@@ -584,6 +604,7 @@ async function startBrowser(
   targetKernel?: string,
   targetProfile?: string,
   initialUrl?: string,
+  headless = false,
 ): Promise<BrowserSession> {
   const { kernel, profile } = resolveKernelAndProfile(targetKernel, targetProfile);
   const provider = getProvider(profile.providerId || kernel.providerId);
@@ -594,8 +615,8 @@ async function startBrowser(
   }
 
   if (browser && browserStatus === "connected") {
-    // 如果当前正在运行的内核与 Profile 数据目录完全一致，直接复用
-    if (browser.browser.kernelId === kernel.id && browser.browser.userDataDir === profile.dir) {
+    // 如果当前正在运行的内核、Profile 数据目录和有无窗口都一致，直接复用
+    if (isSameBrowser(browser, kernel.id, profile.dir, headless)) {
       return browser;
     }
     // 否则先安全关闭当前实例再启动目标内核与 Profile
@@ -625,6 +646,7 @@ async function startBrowser(
       userDataDir: profile.dir,
       profile: profile.id,
       ...(initialUrl ? { initialUrl } : {}),
+      ...(headless ? { headless: true } : {}),
     });
     browser = session;
     browserStatus = "connected";
@@ -709,6 +731,8 @@ function registerIpc() {
         tasks[idx] = {
           ...tasks[idx],
           ...taskData,
+          // 后台运行时浏览器必须在结束后关闭
+          ...(taskData.headless ? { autoClose: true } : {}),
           kernelId: kernel.id,
           kernel: kernel.name,
           autoProfile,
@@ -732,7 +756,8 @@ function registerIpc() {
         autoProfile,
         profileId: autoProfile ? "" : (profile?.id ?? ""),
         profile: autoProfile ? AUTO_PROFILE_LABEL : (profile?.name ?? ""),
-        autoClose: taskData.autoClose ?? true,
+        autoClose: taskData.headless ? true : (taskData.autoClose ?? true),
+        ...(taskData.headless ? { headless: true } : {}),
         mode: taskData.mode || "now",
         schedule: taskData.schedule || "手动",
         cronExpr: taskData.cronExpr,
@@ -828,6 +853,7 @@ function registerIpc() {
   ipcMain.handle(IPC.openBrowser, async (_e, kernelId: string, profileId?: string, url?: string): Promise<BrowserActionResult> => {
     try {
       const { kernel, profile } = resolveKernelAndProfile(kernelId, profileId);
+      assertBrowserNotBusy(kernel.id, profile.dir);
       await startBrowser(kernel.id, profile.id, url);
       return {
         ok: true,
@@ -846,6 +872,7 @@ function registerIpc() {
   ipcMain.handle(IPC.testBrowser, async (_e, kernelId: string, profileId?: string): Promise<BrowserActionResult> => {
     try {
       const { kernel, profile } = resolveKernelAndProfile(kernelId, profileId);
+      assertBrowserNotBusy(kernel.id, profile.dir);
       const session = await startBrowser(kernel.id, profile.id);
       const res = await session.bridge.call("tabs_context_mcp", {}, { timeoutMs: 10_000 });
       if (res.isError) {
@@ -1048,7 +1075,7 @@ app.whenReady().then(() => {
   taskRunner = new TaskRunner(
     emit,
     state,
-    (kernelId, profileId, initialUrl) => startBrowser(kernelId, profileId, initialUrl),
+    (kernelId, profileId, initialUrl, headless) => startBrowser(kernelId, profileId, initialUrl, headless),
     () => closeCurrentBrowser(),
     (bSession, opts) => createAgentForSession(bSession, opts),
   );

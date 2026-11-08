@@ -79,6 +79,9 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
   const [maxSteps, setMaxSteps] = useState(String(task?.maxSteps ?? DEFAULT_MAX_STEPS));
   const [timeoutMinutes, setTimeoutMinutes] = useState(String(task?.timeoutMinutes ?? DEFAULT_TIMEOUT_MINUTES));
   const [autoClose, setAutoClose] = useState(task?.autoClose ?? true);
+  const [headless, setHeadless] = useState(!!task?.headless);
+  /** 后台运行时没有窗口可以手动关，结束后总是关闭 */
+  const closeAfter = headless || autoClose;
   const [repeat, setRepeat] = useState<Repeat>(
     task?.mode === "cron" && task.repeatKind && task.repeatKind !== "manual" && task.repeatKind !== "once" ? task.repeatKind : "manual",
   );
@@ -142,6 +145,7 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
   const profileValue =
     profileChoice && choiceValid ? profileChoice : (profiles.find((p) => p.isDefault)?.id ?? profiles[0]?.id ?? AUTO_PROFILE_VALUE);
   const profileLabel = profileValue === AUTO_PROFILE_VALUE ? AUTO_PROFILE_LABEL : (profiles.find((p) => p.id === profileValue)?.name ?? "");
+  const browserLabel = headless ? "后台运行，不显示浏览器" : `完成后${autoClose ? "自动关闭" : "保留"}浏览器`;
 
   const scheduled = repeat !== "manual";
   const timeOk = !scheduled || TIME_RE.test(time);
@@ -196,7 +200,8 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
         kernelId,
         autoProfile,
         ...(autoProfile ? {} : { profileId: profileValue }),
-        autoClose,
+        autoClose: closeAfter,
+        headless,
         ...(scheduled
           ? { mode: "cron" as const, repeatKind: repeat, repeatTime: time, schedule: scheduleLabel(repeat, time) }
           : { mode: "now" as const, repeatKind: "manual" as const, schedule: "手动" }),
@@ -355,7 +360,7 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
           <button type="button" class="adv" aria-expanded={advOpen} onClick={() => setAdvOpen(!advOpen)}>
             <Icon name="chevron" size={14} />
             高级设置
-            <small>内核、Profile、步数与超时</small>
+            <small>内核、Profile、步数、超时与后台运行</small>
           </button>
           {advOpen && (
             <div class="advbody">
@@ -426,13 +431,33 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
               <button
                 type="button"
                 role="switch"
-                aria-checked={autoClose}
-                class={`switch-row full ${autoClose ? "on" : ""}`}
+                aria-checked={headless}
+                class={`switch-row full ${headless ? "on" : ""}`}
+                onClick={() => setHeadless(!headless)}
+              >
+                <span class="switch-row-text">
+                  <b>后台运行</b>
+                  <small>{headless ? "不显示浏览器窗口，在实时页查看进度和截图" : "运行时显示浏览器窗口"}</small>
+                </span>
+                <i class="switch-knob" />
+              </button>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={closeAfter}
+                disabled={headless}
+                class={`switch-row full ${closeAfter ? "on" : ""}`}
                 onClick={() => setAutoClose(!autoClose)}
               >
                 <span class="switch-row-text">
                   <b>完成后关闭浏览器</b>
-                  <small>{autoClose ? "任务结束后自动关闭窗口" : "任务结束后保留窗口，方便查看现场"}</small>
+                  <small>
+                    {headless
+                      ? "后台运行时总会在结束后关闭"
+                      : autoClose
+                        ? "任务结束后自动关闭窗口"
+                        : "任务结束后保留窗口，方便查看现场"}
+                  </small>
                 </span>
                 <i class="switch-knob" />
               </button>
@@ -465,13 +490,13 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
                 <>
                   <b>{scheduleLabel(repeat, time)}</b> 自动运行{upcoming && <> · {repeat === "hours" ? "首次" : "下次"} <b>{formatUpcoming(upcoming)}</b></>}
                   <small>
-                    {kernel?.name ?? "未选择内核"} · {profileLabel} · 完成后{autoClose ? "自动关闭" : "保留"}浏览器
+                    {kernel?.name ?? "未选择内核"} · {profileLabel} · {browserLabel}
                   </small>
                 </>
               ) : (
                 <>
                   <b>{kernel?.name ?? "未选择内核"}</b> · {profileLabel}
-                  <small>完成后{autoClose ? "自动关闭" : "保留"}浏览器</small>
+                  <small>{browserLabel}</small>
                 </>
               )}
             </div>

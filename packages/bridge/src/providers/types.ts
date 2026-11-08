@@ -51,6 +51,8 @@ export interface LaunchRequest {
   screenshot?: ScreenshotOptions;
   windowSize?: { width: number; height: number };
   initialUrl?: string;
+  /** 以无头模式启动（不显示浏览器窗口） */
+  headless?: boolean;
   extraArgs?: string[];
 }
 
@@ -64,6 +66,8 @@ export interface RunningBrowser {
   userDataDir: string;
   /** Profile 标识（如有） */
   profile?: string;
+  /** 是否以无头模式运行，用于判断是否可复用当前实例 */
+  headless: boolean;
   /** 浏览器退出时回调；code 为 null 表示未知或被信号终止 */
   onExit(cb: (code: number | null) => void): void;
   /** 将连接建立前的异常退出转换为面向用户的错误说明 */

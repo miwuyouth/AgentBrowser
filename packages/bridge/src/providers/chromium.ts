@@ -145,6 +145,8 @@ export class ChromiumProvider implements ManagedProvider {
       "--no-default-browser-check",
       // 设置初始窗口大小
       `--window-size=${size.width},${size.height}`,
+      // 无头模式：新版 headless 支持加载扩展，Agent 照常通过扩展控制页面
+      ...(req.headless ? ["--headless=new"] : []),
       ...(req.extraArgs ?? []),
       req.initialUrl || "about:blank",
     ];
@@ -159,6 +161,7 @@ export class ChromiumProvider implements ManagedProvider {
       kernelId: kernel.id,
       userDataDir,
       ...(req.profile.id ? { profile: req.profile.id } : {}),
+      headless: !!req.headless,
       onExit: (cb) => {
         child.once("exit", (code) => cb(code));
       },

@@ -51,8 +51,10 @@ export interface TaskItem {
   profile: string;
   /** 为 true 时表示每次执行任务都自动新建一个全新 Profile，此时 profileId 留空 */
   autoProfile?: boolean;
-  /** 任务执行完毕后是否自动关闭浏览器实例 */
+  /** 任务执行完毕后是否自动关闭浏览器实例（headless 时始终关闭） */
   autoClose: boolean;
+  /** 后台运行：以无头模式启动浏览器，不显示窗口 */
+  headless?: boolean;
   /** 任务模式：立即执行还是定时循环 */
   mode: TaskMode;
   /** 计划规则的人话描述标签（如 "每天 08:30"） */

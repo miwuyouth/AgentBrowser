@@ -30,6 +30,8 @@ export interface BrowserSessionOptions {
   windowSize?: { width: number; height: number };
   /** 初始打开的网址（默认 about:blank） */
   initialUrl?: string;
+  /** 以无头模式启动（不显示浏览器窗口） */
+  headless?: boolean;
   /** 等待扩展反向连接的超时毫秒数（默认 30,000ms） */
   connectTimeoutMs?: number;
   /** 传递给 Chromium 的额外启动参数 */
@@ -83,6 +85,7 @@ export async function startBrowserSession(opts: BrowserSessionOptions): Promise<
       ...(opts.screenshot ? { screenshot: opts.screenshot } : {}),
       ...(opts.windowSize ? { windowSize: opts.windowSize } : {}),
       ...(opts.initialUrl ? { initialUrl: opts.initialUrl } : {}),
+      ...(opts.headless ? { headless: true } : {}),
       ...(opts.extraArgs ? { extraArgs: opts.extraArgs } : {}),
     });
     const launched = browser;

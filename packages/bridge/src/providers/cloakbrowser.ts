@@ -190,7 +190,7 @@ export class CloakBrowserProvider implements ManagedProvider {
 
     const context = await cloak.launchPersistentContext({
       userDataDir,
-      headless: false,
+      headless: !!req.headless,
       extensionPaths: [extensionDir],
       args: [
         `--fingerprint=${fp.seed}`,
@@ -221,6 +221,7 @@ export class CloakBrowserProvider implements ManagedProvider {
       kernelId: req.kernel?.id ?? this.id,
       userDataDir,
       ...(req.profile.id ? { profile: req.profile.id } : {}),
+      headless: !!req.headless,
       // Playwright 不提供退出码
       onExit: (cb) => {
         context.once("close", () => cb(null));

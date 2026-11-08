@@ -66,7 +66,12 @@ export class TaskRunner {
   constructor(
     private emitEvent: (event: UiEvent) => void,
     private getAppState: () => AppState,
-    private getOrStartBrowser: (kernelId: string, profileId: string, initialUrl?: string) => Promise<BrowserSession>,
+    private getOrStartBrowser: (
+      kernelId: string,
+      profileId: string,
+      initialUrl?: string,
+      headless?: boolean,
+    ) => Promise<BrowserSession>,
     private closeBrowser: () => Promise<void>,
     private createAgent: (browser: BrowserSession, opts: AgentRunOptions) => AgentSession,
   ) {}
@@ -238,7 +243,7 @@ export class TaskRunner {
       stepNumber: 1,
       status: "run",
       tag: "启动",
-      text: `启动「${kernel.name}」，加载对应 Profile「${profile.name}」`,
+      text: `${task.headless ? "后台启动" : "启动"}「${kernel.name}」，加载对应 Profile「${profile.name}」`,
       meta: "进行中",
     };
 
@@ -260,7 +265,7 @@ export class TaskRunner {
     try {
       // 1. 拉起或连接任务指定的浏览器内核及对应 Profile
       const initialUrl = task.url;
-      const browserSession = await this.getOrStartBrowser(kernel.id, profile.id, initialUrl);
+      const browserSession = await this.getOrStartBrowser(kernel.id, profile.id, initialUrl, !!task.headless);
 
       // 2. 检查模型配置并实例化 Agent
       const agentSession = this.createAgent(browserSession, {
@@ -290,7 +295,8 @@ export class TaskRunner {
       this.activeRun = null;
       this.currentAgent = null;
       this.currentAbortController = null;
-      if (task.autoClose) {
+      // 后台运行没有窗口可以手动关，结束后一律关闭，避免留下看不见的浏览器进程
+      if (task.autoClose || task.headless) {
         await this.closeBrowser().catch(() => {});
       }
       this.emitEvent({ type: "state", state: this.getAppState() });
