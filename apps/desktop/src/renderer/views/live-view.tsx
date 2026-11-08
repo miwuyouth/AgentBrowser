@@ -61,7 +61,7 @@ function LiveStep({ step }: { step: RunStep }) {
  * 【作用】
  * 1. 监控当前处于执行中（`status === "run"`）的活跃任务；
  * 2. 头部展示任务名、实时耗时时钟（如 01:23）、已执行步数及"终止"中断按钮；
- * 3. 左侧展示步骤时间线流，并在新步骤追加时自动平滑滚动至最底部；
+ * 3. 左侧展示步骤时间线流，新步骤追加时若用户停在底部则自动跟随到最底部，往上翻看时不打扰；
  * 4. 右侧以模拟浏览器容器展示当前页面 URL 与最新落盘的屏幕截图，支持点击调起灯箱大图预览；
  * 5. 任务结束侦测：一旦后端执行完毕或中断（`run` 对象消失），自动无缝跳转至对应的运行详情页（`go("run", seenRunId)`）引导用户查看结果。
  *
@@ -92,10 +92,22 @@ export function LiveView({ state, go }: { state: AppState; go: Navigate }) {
     return () => clearTimeout(timer);
   }, [!!run]);
 
+  /** 用户是否停在列表底部附近；往上翻看历史步骤时不再强行拉到底 */
+  const stickToBottom = useRef(true);
+
+  /**
+   * 记录用户当前是否贴着底部。
+   * 【调用时机】步骤列表滚动时（含用户手动滚动和下方的自动滚动）。
+   */
+  const onStepsScroll = () => {
+    const el = listRef.current;
+    if (el) stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+  };
+
   const steps = run ? visibleSteps(run.steps) : [];
   useEffect(() => {
     const el = listRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el && stickToBottom.current) el.scrollTop = el.scrollHeight;
   }, [steps.length]);
 
   if (!run) {
@@ -151,7 +163,7 @@ export function LiveView({ state, go }: { state: AppState; go: Navigate }) {
       </header>
 
       <div class="live-body">
-        <ol class="live-steps" ref={listRef}>
+        <ol class="live-steps" ref={listRef} onScroll={onStepsScroll}>
           {steps.map((s) => (
             <LiveStep key={s.stepNumber} step={s} />
           ))}
