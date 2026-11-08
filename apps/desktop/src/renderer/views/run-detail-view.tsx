@@ -16,7 +16,7 @@ function StepRow({ runId, step, onShot }: { runId: string; step: RunStep; onShot
   return (
     <li class="step-row">
       <span class={`s-mark ${step.status}`}>{step.status === "done" && <Icon name="check" size={11} />}</span>
-      <span class="step-text" title={target}>
+      <span class="step-text" title={target || label}>
         {label && <b>{label}</b>}
         {target}
       </span>

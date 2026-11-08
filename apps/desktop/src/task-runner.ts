@@ -261,11 +261,11 @@ export class TaskRunner {
             };
           }
           const newStep: RunStep = {
-            // 编号统一按当前步数 + 1，避免和「插话」步骤撞号（截图文件名也用它）
+            // 编号统一按当前步数 + 1（截图文件名也用它）
             stepNumber: this.activeRun.steps.length + 1,
             status: "run",
             tag: this.resolveToolTag(event.name),
-            text: [event.name, this.summarizeArgs(event.input)].filter(Boolean).join("  "),
+            text: [event.name, this.summarizeArgs(event.name, event.input)].filter(Boolean).join("  "),
             meta: "进行中",
           };
           // 记录 Agent 最后导航到的页面：失败后「从上次失败处重试」要用
@@ -344,6 +344,8 @@ export class TaskRunner {
       case "get_page_text":
       case "find":
         return "提取";
+      case "javascript_tool":
+        return "数据";
       case "browser_batch":
         return "批量";
       case "submit_result":
@@ -373,13 +375,16 @@ export class TaskRunner {
     return null;
   }
 
-  /** 生成简短的参数摘要：去掉 tabId 等噪音字段，URL / 文本直接展示 */
-  private summarizeArgs(input: unknown): string {
+  /** 生成简短的参数摘要：过滤机器内部噪音，只保留高价值目标（URL、输入文本、查询词等） */
+  private summarizeArgs(name: string, input: unknown): string {
     if (!input || typeof input !== "object") return "";
     const obj = input as Record<string, unknown>;
     const clip = (v: string, n = 60) => (v.length > n ? v.slice(0, n - 1) + "…" : v);
 
-    if (typeof obj.url === "string") return clip(obj.url);
+    if (name === "navigate" || typeof obj.url === "string") {
+      return typeof obj.url === "string" ? clip(obj.url) : "";
+    }
+
     if (Array.isArray(obj.actions)) {
       const names = obj.actions
         .map((a) => (a && typeof a === "object" ? (a as { name?: unknown }).name : null))
@@ -387,10 +392,32 @@ export class TaskRunner {
       return names.length ? clip(names.join(" → ")) : `${obj.actions.length} 个动作`;
     }
 
-    const noise = new Set(["tabId", "createIfEmpty"]);
-    const parts = Object.entries(obj)
-      .filter(([k, v]) => !noise.has(k) && v !== undefined && v !== null)
-      .map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`);
-    return clip(parts.join(" "));
+    if (name === "javascript_tool") {
+      const code = typeof obj.text === "string" ? obj.text : "";
+      if (/fetch|axios|api|\/t\//i.test(code)) return "fetch";
+      return "";
+    }
+
+    if (name === "read_page" || name === "get_page_text" || name === "submit_result") {
+      return "";
+    }
+
+    if (name === "computer") {
+      const action = typeof obj.action === "string" ? obj.action : "";
+      if (action === "type" && typeof obj.text === "string") return `type text="${clip(obj.text, 24)}"`;
+      if (action === "key" && typeof obj.text === "string") return `key text="${obj.text}"`;
+      if (action) return action;
+      return "";
+    }
+
+    if (name === "find" && typeof obj.query === "string") {
+      return `query="${clip(obj.query, 24)}"`;
+    }
+
+    if (name === "form_input" && obj.value !== undefined) {
+      return `value="${clip(String(obj.value), 24)}"`;
+    }
+
+    return "";
   }
 }

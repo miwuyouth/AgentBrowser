@@ -1,50 +1,52 @@
-import type { AppState, TaskItem, TaskStatus } from "../../shared.ts";
+import type { AppState, TaskItem } from "../../shared.ts";
 import { Icon } from "../icons.tsx";
 import { getReadiness } from "../readiness.ts";
 import { PageHead } from "../page.tsx";
 import type { Navigate } from "../sidebar.tsx";
 
-type RowStatus = TaskStatus | "queued";
-const STATUS_LABEL: Record<RowStatus, string> = { ok: "成功", run: "运行中", fail: "失败", none: "未运行", queued: "排队中" };
-
-function TaskRow({ task, status, busy, go }: { task: TaskItem; status: RowStatus; busy: boolean; go: Navigate }) {
-  const open = () => go("runs", task.id);
-  const stop = (e: Event) => e.stopPropagation();
+function TaskRow({
+  task,
+  busy,
+  running,
+  go,
+}: {
+  task: TaskItem;
+  busy: boolean;
+  running: boolean;
+  go: Navigate;
+}) {
+  const open = () => go("editor", task.id);
 
   return (
     <li
       class="row"
       role="link"
       tabIndex={0}
-      aria-label={`查看「${task.name}」的运行记录`}
+      aria-label={`编辑「${task.name}」`}
       onClick={open}
       onKeyDown={(e) => e.key === "Enter" && open()}
     >
-      <i class={`dot ${status}`} />
       <span class="row-name">{task.name}</span>
 
-      <span class="row-actions" onClick={stop}>
-        {status !== "run" && (
-          <button
-            type="button"
-            class="btn btn-sm"
-            disabled={busy}
-            title={busy ? "已有任务正在运行" : undefined}
-            onClick={() => {
-              void window.agentApi.runTask(task.id);
-              go("live");
-            }}
-          >
-            <Icon name="play" size={12} />
-            运行
-          </button>
-        )}
-        <button type="button" class="icon-btn" aria-label="编辑任务" title="编辑" onClick={() => go("editor", task.id)}>
-          <Icon name="edit" size={15} />
-        </button>
-      </span>
+      <button
+        type="button"
+        class="btn btn-sm"
+        disabled={busy && !running}
+        title={busy && !running ? "已有任务正在运行" : running ? "查看实时运行" : undefined}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (running) {
+            go("live");
+          } else {
+            void window.agentApi.runTask(task.id);
+            go("live");
+          }
+        }}
+      >
+        <Icon name="play" size={12} />
+        {running ? "运行中" : "运行"}
+      </button>
 
-      <span class="row-meta">{STATUS_LABEL[status]}</span>
       <Icon name="chevron" size={14} />
     </li>
   );
@@ -98,11 +100,15 @@ export function TasksView({ state, go, onOpenSettings }: { state: AppState; go: 
       <PageHead title="任务" desc={`${tasks.length} 个任务`} />
       <SetupHint state={state} go={go} onOpenSettings={onOpenSettings} />
       <ul class="list">
-        {tasks.map((t) => {
-          // 正在运行的那一个以主进程的实时状态为准
-          const status: RowStatus = state.activeRun?.taskId === t.id ? "run" : state.queued.includes(t.id) ? "queued" : t.lastStatus;
-          return <TaskRow key={t.id} task={t} status={status} busy={state.running} go={go} />;
-        })}
+        {tasks.map((t) => (
+          <TaskRow
+            key={t.id}
+            task={t}
+            busy={state.running}
+            running={state.activeRun?.taskId === t.id}
+            go={go}
+          />
+        ))}
       </ul>
     </div>
   );

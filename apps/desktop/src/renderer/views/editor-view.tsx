@@ -92,7 +92,8 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
     const el = goalRef.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
+    const borderOffset = el.offsetHeight - el.clientHeight;
+    el.style.height = `${Math.max(100, el.scrollHeight + borderOffset)}px`;
   }, [goal]);
 
   // 新建任务时直接把光标放在目标输入框（autofocus 属性在页面内跳转时不生效）
@@ -100,9 +101,17 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
     if (!task) goalRef.current?.focus();
   }, []);
 
+  const back = (
+    <button type="button" class="back" onClick={() => go("tasks")}>
+      <Icon name="back" size={14} />
+      任务
+    </button>
+  );
+
   if (taskId && !task) {
     return (
       <div class="page">
+        {back}
         <div class="empty">
           <h2>找不到这个任务</h2>
           <p>它可能已经被删除了。</p>
@@ -175,6 +184,7 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
   return (
     <div class="editor">
       <div class="page">
+        {back}
         <PageHead title={task ? "编辑任务" : "新建任务"} desc="用一句话告诉 Agent 要做什么" />
 
         <div class="card">
@@ -183,7 +193,7 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
             <textarea
               id="task-goal"
               ref={goalRef}
-              rows={1}
+              rows={3}
               placeholder="例如：打开商城首页，进入个人中心，完成每日签到"
               value={goal}
               onInput={(e) => setGoal(e.currentTarget.value)}

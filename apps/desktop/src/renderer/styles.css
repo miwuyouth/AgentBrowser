@@ -320,7 +320,7 @@ svg.icon {
 .row-meta { min-width: 56px; text-align: right; color: var(--text-2); }
 .row > svg.icon { color: var(--text-3); }
 
-/* 运行、编辑只在悬停或键盘聚焦时出现，平时行里只有名称和状态 */
+/* 行内操作按钮只在悬停或键盘聚焦时出现 */
 .row-actions { display: flex; align-items: center; gap: 4px; opacity: 0; transition: opacity 0.12s ease; }
 .row:hover .row-actions, .row:focus-within .row-actions { opacity: 1; }
 .btn-sm { height: 28px; padding: 0 10px; font-size: 12.5px; border-radius: 7px; gap: 6px; }
@@ -379,6 +379,7 @@ svg.icon {
 .step-list { margin: 0; padding: 4px 20px 12px; list-style: none; border-top: 1px solid var(--line); }
 .step-row { display: flex; align-items: center; gap: 12px; min-height: 36px; }
 .step-text { flex: 1; min-width: 0; overflow: hidden; color: var(--text-2); text-overflow: ellipsis; white-space: nowrap; }
+.step-text b { font-weight: 500; color: var(--text); margin-right: 8px; }
 .step-meta { color: var(--text-3); font-size: 12px; }
 .s-mark { display: grid; place-items: center; flex: none; width: 16px; height: 16px; border-radius: 50%; color: var(--text-3); }
 .s-mark.todo, .s-mark.run { border: 1.5px dashed var(--line-strong); }
@@ -392,24 +393,43 @@ svg.icon {
 .editor { display: flex; flex-direction: column; min-height: 100%; }
 .editor .page { flex: 1; width: 100%; }
 
-.goal { padding: 22px 24px 8px; }
+.goal { padding: 20px 24px; }
 .goal label, .goal-extra label { display: block; margin-bottom: 8px; font-size: 12px; font-weight: 500; color: var(--text-2); }
-.goal textarea { display: block; width: 100%; min-height: 28px; padding: 0; border: 0; outline: 0; resize: none; background: none; font-size: 16px; line-height: 1.6; }
+.goal textarea {
+  display: block;
+  width: 100%;
+  min-height: 100px;
+  max-height: 320px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: var(--bg);
+  outline: 0;
+  resize: none;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text);
+  overflow-y: auto;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
 .goal textarea::placeholder { color: var(--text-3); }
-.goal-extra { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding: 16px 24px 22px; }
+.goal textarea:hover { border-color: var(--text-3); }
+.goal textarea:focus { border-color: var(--text-3); box-shadow: 0 0 0 3px var(--active); }
+.goal-extra { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding: 20px 24px 22px; border-top: 1px solid var(--line); }
 .goal-extra .full { grid-column: 1 / -1; }
 
-/* 任务编辑页：表单提取配置 */
-.form-builder-card { padding: 18px 22px; margin-top: 14px; }
-.form-builder-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+/* 表单字段配置卡片 (任务编辑页) */
+.form-builder-card { margin-top: 14px; padding: 18px 24px 20px; }
+.form-builder-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
 .form-builder-title { font-size: 13px; font-weight: 600; color: var(--text); }
-.form-builder-desc { margin-top: 3px; font-size: 12px; color: var(--text-3); }
-.form-builder-empty { padding: 18px 14px; border: 1px dashed var(--line-strong); border-radius: var(--radius); background: var(--bg); font-size: 12.5px; color: var(--text-3); text-align: center; }
+.form-builder-desc { margin-top: 3px; font-size: 12px; color: var(--text-2); }
+.form-builder-empty { padding: 16px; border: 1px dashed var(--line-strong); border-radius: var(--radius); text-align: center; color: var(--text-3); font-size: 12.5px; }
+
 .form-fields-list { display: flex; flex-direction: column; gap: 10px; }
-.form-field-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); }
-.form-field-num { font-size: 12px; font-weight: 600; color: var(--text-3); width: 16px; text-align: center; flex: none; }
+.form-field-row { display: flex; align-items: center; gap: 10px; }
+.form-field-num { width: 18px; color: var(--text-3); font-size: 12px; font-weight: 600; text-align: center; flex: none; }
 .form-field-col.name { width: 180px; flex: none; }
-.form-field-col.type { width: 90px; flex: none; }
+.form-field-col.type { width: 110px; flex: none; }
 .form-field-col.desc { flex: 1; min-width: 0; }
 .form-field-del { color: var(--text-3); flex: none; }
 .form-field-del:hover { color: var(--err); background: color-mix(in srgb, var(--err) 10%, transparent); }
@@ -435,7 +455,7 @@ svg.icon {
 .switch.on i { background: var(--accent); }
 .switch.on i::after { transform: translateX(14px); background: var(--on-accent); }
 
-.link-btn.danger { display: block; margin-top: 28px; }
+.link-btn.danger { display: block; margin-top: 28px; margin-left: auto; text-align: right; }
 .link-btn.danger:hover { color: var(--err); }
 
 .action-bar { position: sticky; bottom: 0; z-index: 2; border-top: 1px solid var(--line); background: color-mix(in srgb, var(--bg) 86%, transparent); backdrop-filter: saturate(1.4) blur(14px); }
@@ -459,14 +479,15 @@ svg.icon {
 .btn-quiet-danger:hover { background: color-mix(in srgb, var(--err) 8%, transparent); }
 
 .live-body { display: grid; grid-template-columns: 340px minmax(0, 1fr); min-height: 0; }
-.live-steps { margin: 0; padding: 24px 28px; overflow: auto; list-style: none; border-right: 1px solid var(--line); }
-.live-step { position: relative; display: grid; grid-template-columns: 16px 1fr; gap: 14px; padding-bottom: 20px; }
+.live-steps { margin: 0; padding: 24px 28px; overflow-y: auto; overflow-x: hidden; list-style: none; border-right: 1px solid var(--line); }
+.live-step { position: relative; display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 14px; padding-bottom: 20px; }
 .live-step::before { content: ""; position: absolute; top: 18px; bottom: 0; left: 7.5px; width: 1px; background: var(--line-strong); }
 .live-step:last-child::before { display: none; }
 .live-mark { display: grid; place-items: center; width: 16px; height: 16px; margin-top: 2px; border-radius: 50%; background: var(--text-3); color: var(--bg); }
 .live-step.run .live-mark { background: none; border: 2px solid var(--text); animation: pulse 1.8s ease-in-out infinite; }
 .live-step.todo .live-mark { background: none; border: 1.5px dashed var(--line-strong); }
-.live-step-label { color: var(--text-2); }
+.live-step-body { min-width: 0; }
+.live-step-label { color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .live-step.run .live-step-label { color: var(--text); font-weight: 500; }
 .live-step-target { margin-top: 1px; overflow: hidden; font-size: 12px; color: var(--text-3); text-overflow: ellipsis; white-space: nowrap; }
 
@@ -515,7 +536,7 @@ svg.icon {
    弹窗
    ============================================================ */
 .modal-overlay { position: fixed; inset: 0; z-index: 15; display: grid; place-items: center; padding: 32px; background: rgba(0, 0, 0, 0.4); animation: fade-in 0.15s ease; }
-.modal { width: 100%; max-width: 440px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); box-shadow: 0 24px 64px rgba(0, 0, 0, 0.28); }
+.modal { width: 100%; max-width: 580px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); box-shadow: 0 24px 64px rgba(0, 0, 0, 0.28); }
 .modal-head { display: flex; align-items: center; justify-content: space-between; padding: 20px 24px 0; }
 .modal-head h2 { font-size: 16px; font-weight: 600; }
 .modal-body { display: grid; gap: 16px; padding: 20px 24px; }
