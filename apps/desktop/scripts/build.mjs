@@ -40,18 +40,10 @@ for (const f of ["index.html", "styles.css", "logo.svg"]) {
   if (existsSync(srcFile)) cpSync(srcFile, path.join(dist, "renderer", f));
 }
 
-// 主进程运行时只用到 icon.png（窗口 / Dock 图标）
+// 主进程窗口图标
 const assetsDir = path.join(root, "assets");
 const pngIcon = path.join(assetsDir, "icon.png");
 if (existsSync(pngIcon)) cpSync(pngIcon, path.join(dist, "icon.png"));
 
-// 同步更新本地 Electron.app 的默认图标包，确保 macOS Dock 在开发模式下也展示产品图标
-const electronResources = path.join(root, "node_modules/electron/dist/Electron.app/Contents/Resources");
-const icnsSrc = path.join(assetsDir, "icon.icns");
-if (existsSync(electronResources) && existsSync(icnsSrc)) {
-  try {
-    cpSync(icnsSrc, path.join(electronResources, "electron.icns"));
-  } catch {}
-}
-
 console.log("desktop app built");
+process.exit(0);

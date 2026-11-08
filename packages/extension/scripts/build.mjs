@@ -29,3 +29,4 @@ await Promise.all([
 ]);
 console.log(`extension built: ${dist}\nextension id: ${id}`);
 if (watch) console.log("--watch is not implemented; rerun the build after changes");
+process.exit(0);

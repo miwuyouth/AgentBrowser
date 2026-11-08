@@ -1,6 +1,10 @@
 node_modules/
 dist/
 out/
+release/
+build/
 *.log
 .DS_Store
 /.agent-browser-data/
+*.tsbuildinfo
+

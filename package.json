@@ -5,11 +5,13 @@
   "description": "桌面 App 内的 Agent 通过自研 Chrome 扩展操作浏览器",
   "packageManager": "pnpm@10.28.2",
   "scripts": {
-    "build": "pnpm -r --filter ./packages/extension --filter ./apps/desktop run build",
+    "build": "pnpm --filter @agent-browser/extension run build && pnpm --filter @agent-browser/desktop run build",
     "build:extension": "pnpm --filter @agent-browser/extension run build",
     "typecheck": "pnpm -r run typecheck",
     "cli": "pnpm --filter @agent-browser/agent run cli",
     "dev": "pnpm --filter @agent-browser/desktop run dev",
+    "package": "pnpm build && pnpm --filter @agent-browser/desktop run package",
+    "dist": "pnpm build && pnpm --filter @agent-browser/desktop run dist",
     "test": "tsx apps/desktop/src/scheduler.test.ts && tsx apps/desktop/src/run-stop.test.ts && tsx apps/desktop/src/defaults.test.ts && tsx apps/desktop/src/run-store.test.ts"
   },
   "devDependencies": {

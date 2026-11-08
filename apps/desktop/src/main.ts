@@ -1,4 +1,4 @@
-import { BrowserWindow, app, clipboard, dialog, ipcMain, nativeImage, nativeTheme, net, protocol, shell } from "electron";
+import { BrowserWindow, app, clipboard, dialog, ipcMain, nativeTheme, net, protocol, shell } from "electron";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -589,12 +589,6 @@ function createWindow() {
 // Electron 启动入口
 app.whenReady().then(() => {
   app.setName("Agent 任务台");
-  const iconPath = appIconPath();
-  if (process.platform === "darwin" && app.dock && existsSync(iconPath)) {
-    try {
-      app.dock.setIcon(nativeImage.createFromPath(iconPath));
-    } catch {}
-  }
 
   protocol.handle("shot", (request) => {
     const [, runId = "", file = ""] = new URL(request.url).pathname.split("/");
