@@ -602,6 +602,7 @@ svg.icon {
 .row-static { height: auto; min-height: 64px; padding-top: 12px; padding-bottom: 12px; cursor: default; }
 .row-main { flex: 1; min-width: 0; }
 .row-main .row-name { flex: none; }
+.row-sub { margin-top: 2px; overflow: hidden; color: var(--text-3); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .input-sm { height: 30px; max-width: 280px; }
 
 /* ============================================================

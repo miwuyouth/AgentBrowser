@@ -6,28 +6,56 @@ import { PageHead } from "../page.tsx";
 import type { Navigate } from "../sidebar.tsx";
 
 /**
+ * 算出任务运行时会用哪个 Profile 的展示文字。
+ *
+ * 【调用时机】
+ * 渲染任务列表每一行时调用。
+ *
+ * 【作用】
+ * 按 Profile ID 查当前名称（改过名也能跟上）；找不到时和编辑页、运行时一致，退回该内核的默认 Profile。
+ * 装了不止一个内核时前面加上内核名，因为每个内核都有一个同名的「主 Profile」。
+ *
+ * @param task 任务实体对象
+ * @param state 当前全局应用状态
+ * @returns 例如「主 Profile」或「Chromium · 工作号」
+ */
+function profileText(task: TaskItem, state: AppState): string {
+  const own = state.profiles.filter((p) => p.kernelId === task.kernelId);
+  const name = task.autoProfile
+    ? "每次新建 Profile"
+    : (own.find((p) => p.id === task.profileId) ?? own.find((p) => p.isDefault) ?? own[0])?.name ?? "运行时自动创建 Profile";
+  const kernelsInUse = new Set(state.profiles.map((p) => p.kernelId)).size;
+  if (kernelsInUse <= 1) return name;
+  const kernel = state.kernels.find((k) => k.id === task.kernelId)?.name ?? task.kernel;
+  return kernel ? `${kernel} · ${name}` : name;
+}
+
+/**
  * 任务列表单项条目组件。
  *
  * 【调用时机】
  * 在 `TasksView` 任务列表中遍历渲染各个任务时调用。
  *
  * 【作用】
- * 1. 展示任务名称，以及运行方式（「手动」或周期规则如「每天 08:30」）；
+ * 1. 展示任务名称、其下一行灰字显示所用 Profile，以及运行方式（「手动」或周期规则如「每天 08:30」）；
  * 2. 点击整行条目跳转该任务的编辑页面（`go("editor", task.id)`）；
  * 3. 右侧提供"运行"（若当前正在跑该任务则显示为"运行中"并支持直达 LiveView）按钮，处理并发互斥状态（`busy && !running` 时禁用）。
  *
  * @param task 任务实体对象
+ * @param profile 该任务所用 Profile 的展示文字
  * @param busy 当前是否有任何任务在运行中
  * @param running 当前正在执行的任务是否正是本任务
  * @param go 路由导航函数
  */
 function TaskRow({
   task,
+  profile,
   busy,
   running,
   go,
 }: {
   task: TaskItem;
+  profile: string;
   busy: boolean;
   running: boolean;
   go: Navigate;
@@ -44,7 +72,10 @@ function TaskRow({
       onClick={open}
       onKeyDown={(e) => e.key === "Enter" && open()}
     >
-      <span class="row-name">{task.name}</span>
+      <div class="row-main">
+        <div class="row-name">{task.name}</div>
+        <div class="row-sub" title="运行时使用的 Profile">{profile}</div>
+      </div>
 
       {scheduled ? (
         <span class="row-kind on" title="按周期自动运行">
@@ -160,6 +191,7 @@ export function TasksView({ state, go, onOpenSettings }: { state: AppState; go: 
           <TaskRow
             key={t.id}
             task={t}
+            profile={profileText(t, state)}
             busy={state.running}
             running={state.activeRun?.taskId === t.id}
             go={go}
