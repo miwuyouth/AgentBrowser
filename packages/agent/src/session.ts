@@ -9,7 +9,7 @@
  */
 
 import type { BrowserBridge } from "@agent-browser/bridge";
-import { MODEL_TOOLS, errorResult, type ToolResult } from "@agent-browser/protocol";
+import { MODEL_TOOLS, errorResult, type ToolDefinition, type ToolResult } from "@agent-browser/protocol";
 import { BrowserToolExecutor, type ExecutorOptions } from "./executor.ts";
 import { SYSTEM_PROMPT } from "./prompt.ts";
 import { AnthropicProvider, type AnthropicProviderOptions } from "./providers/anthropic.ts";
@@ -30,6 +30,13 @@ export interface AgentOptions {
   /** 追加到内置系统提示词末尾的自定义指令 */
   instructions?: string;
   allowFile?: ExecutorOptions["allowFile"];
+  /** 核对 `submit_result` 提交内容的回调，结论会作为工具结果回给 Agent */
+  onSubmitResult?: ExecutorOptions["onSubmitResult"];
+  /**
+   * 覆盖 `submit_result` 中 `data` 参数的说明，用来告诉模型本任务具体要提交哪些键。
+   * 只改说明文字、不改 schema 结构：部分模型接口不接受非 ASCII 的属性名（字段名常为中文）。
+   */
+  submitDataDescription?: string;
 }
 
 /** 会话运行过程中对外派发的事件流 */
@@ -69,11 +76,13 @@ export class AgentSession {
       });
     this.maxSteps = opts.maxSteps ?? 150;
     const system = opts.instructions ? `${SYSTEM_PROMPT}\n\nAdditional instructions\n${opts.instructions}` : SYSTEM_PROMPT;
-    this.conversation = this.provider.createConversation(system, MODEL_TOOLS);
+    const tools = opts.submitDataDescription ? withSubmitDataDescription(opts.submitDataDescription) : MODEL_TOOLS;
+    this.conversation = this.provider.createConversation(system, tools);
     this.executor = new BrowserToolExecutor({
       bridge: opts.bridge,
       completeJson: (req) => this.provider.completeJson(req),
       ...(opts.allowFile ? { allowFile: opts.allowFile } : {}),
+      ...(opts.onSubmitResult ? { onSubmitResult: opts.onSubmitResult } : {}),
     });
   }
 
@@ -147,4 +156,16 @@ export class AgentSession {
     }
     onEvent({ type: "done", reason: "max_steps", message: `Stopped after ${this.maxSteps} steps.` });
   }
+}
+
+/** 返回一份工具列表副本，其中 `submit_result.data` 的说明替换为指定文字 */
+function withSubmitDataDescription(description: string): ToolDefinition[] {
+  return MODEL_TOOLS.map((tool) => {
+    if (tool.name !== "submit_result") return tool;
+    const props = tool.input_schema.properties ?? {};
+    return {
+      ...tool,
+      input_schema: { ...tool.input_schema, properties: { ...props, data: { ...props.data, type: "object", description } } },
+    };
+  });
 }

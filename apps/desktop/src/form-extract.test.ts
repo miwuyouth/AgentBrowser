@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { normalizeFormData, tryExtractJsonFallback } from "./form-extract.ts";
+import { describeSubmitData, normalizeFormData, reviewSubmission, tryExtractJsonFallback } from "./form-extract.ts";
 import type { FormField } from "./shared.ts";
 
 /**
@@ -84,6 +84,62 @@ test("tryExtractJsonFallback: 从裸文本 JSON 中兜底提取", () => {
   assert.ok(extracted);
   assert.equal(extracted["商品名称"], "键盘");
   assert.equal(extracted["商品价格"], 299);
+});
+
+const beans: FormField[] = [{ id: "f1", name: "京豆", type: "number", description: "领取完成后的京豆" }];
+
+test("reviewSubmission: 正确提交时通过并写入数据", () => {
+  const r = reviewSubmission({ 京豆: 3 }, beans);
+  assert.equal(r.ok, true);
+  assert.equal(r.data["京豆"], 3);
+  assert.match(r.message, /已记录：「京豆」= 3/);
+});
+
+test("reviewSubmission: 自创键名（value/cmd）时不通过并给出正确格式", () => {
+  const r = reviewSubmission({ value: 3, cmd: "京豆" }, beans);
+  assert.equal(r.ok, false);
+  assert.equal(r.data["京豆"], null);
+  assert.match(r.message, /未定义的键：value、cmd/);
+  assert.match(r.message, /缺少字段：「京豆」/);
+  assert.match(r.message, /\{"data": \{"京豆": <数字>\}\}/);
+});
+
+test("reviewSubmission: 数字字段给了非数字时不通过，且不重复报缺少", () => {
+  const r = reviewSubmission({ 京豆: "暂无" }, beans);
+  assert.equal(r.ok, false);
+  assert.match(r.message, /「京豆」应为纯数字/);
+  assert.doesNotMatch(r.message, /缺少字段/);
+});
+
+test("reviewSubmission: 显式提交 null 视为已交代，可以通过", () => {
+  const r = reviewSubmission({ 京豆: null }, beans);
+  assert.equal(r.ok, true);
+  assert.equal(r.data["京豆"], null);
+});
+
+test("reviewSubmission: 部分提交先记下，补交后合并通过", () => {
+  const first = reviewSubmission({ 商品名称: "键盘" }, fields);
+  assert.equal(first.ok, false);
+  assert.equal(first.data["商品名称"], "键盘");
+  assert.match(first.message, /本次已先记下：「商品名称」= "键盘"/);
+  const rest = Object.fromEntries(fields.filter((f) => f.name !== "商品名称").map((f) => [f.name, f.type === "number" ? 1 : "x"]));
+  const second = reviewSubmission(rest, fields, first);
+  assert.equal(second.ok, true);
+  assert.equal(second.data["商品名称"], "键盘");
+});
+
+test("reviewSubmission: 字段都对时多余键只提示忽略", () => {
+  const r = reviewSubmission({ 京豆: "1,200", note: "已领取" }, beans);
+  assert.equal(r.ok, true);
+  assert.equal(r.data["京豆"], 1200);
+  assert.match(r.message, /note（已忽略）/);
+});
+
+test("describeSubmitData: 列出字段名与格式模板", () => {
+  assert.equal(
+    describeSubmitData(beans),
+    '本任务要提交的字段，键名必须与字段名完全一致：「京豆」数字。格式：{"京豆": <数字>}。页面上确实找不到的字段填 null。',
+  );
 });
 
 console.log(`\n${passed} 个测试全部通过`);

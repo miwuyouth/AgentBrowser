@@ -36,8 +36,17 @@ export interface ExecutorOptions {
    * 决定 Agent 是否允许上传指定的本地文件。默认允许读取任意可读文件；可按需限制指定目录。
    */
   allowFile?: (absolutePath: string) => boolean | Promise<boolean>;
+  /**
+   * `submit_result` 校验回调：
+   * 由宿主按任务的字段要求核对 Agent 提交的数据，返回值原样作为工具结果回给 Agent。
+   * 不通过时 Agent 会收到错误，可据此改正后重新提交；未提供时一律视为提交成功。
+   */
+  onSubmitResult?: (data: Record<string, unknown>) => SubmitCheck;
   timeoutMs?: number;
 }
+
+/** `submit_result` 的校验结论：`message` 为给 Agent 的成功回执，`error` 为要求 Agent 改正的说明 */
+export type SubmitCheck = { ok: true; message?: string } | { ok: false; error: string };
 
 /** 常用文件扩展名到 MIME 类型的映射字典 */
 const MIME: Record<string, string> = {
@@ -86,10 +95,12 @@ export class BrowserToolExecutor {
         return findElements(this.opts.bridge, this.opts.completeJson, input as { query: string; tabId: number }, signal);
       case "file_upload":
         return this.fileUpload(input as { paths: string[]; ref: string; tabId: number }, signal);
-      case "submit_result":
-        return {
-          content: [{ type: "text", text: "Structured form data has been recorded successfully." }],
-        };
+      case "submit_result": {
+        if (!isPlainObject(input.data)) return errorResult('"data" must be an object of field name → value.', "input_invalid");
+        const check = this.opts.onSubmitResult?.(input.data);
+        if (check && !check.ok) return errorResult(check.error, "input_invalid");
+        return { content: [text(check?.message ?? "Structured data has been recorded.")] };
+      }
       default:
         // 其余工具直接转发给 Chrome 扩展
         return this.opts.bridge.call(name, input, this.callOptions(signal));

@@ -72,7 +72,7 @@ import {
   updateProfileMeta,
 } from "./storage.ts";
 import { Scheduler } from "./scheduler.ts";
-import { TaskRunner } from "./task-runner.ts";
+import { TaskRunner, type AgentRunOptions } from "./task-runner.ts";
 
 // 截图以 shot://run/<运行ID>/<文件名> 的自定义协议提供给界面，彻底避免把体积巨大的 base64 塞进 IPC 消息中。
 // 必须在 app.whenReady() 之前注册特权方案。
@@ -480,10 +480,10 @@ async function confirmQuit(warning: QuitWarning) {
  * 3. 构造并返回 `@agent-browser/agent` 的 `AgentSession` 实例。
  *
  * @param session 已建立连接的浏览器会话
- * @param opts 运行选项，如步数上限
+ * @param opts 运行选项：步数上限、表单提交的核对回调与参数说明
  * @returns 实例化完成的 AgentSession
  */
-function createAgentForSession(session: BrowserSession, opts: { maxSteps?: number }): AgentSession {
+function createAgentForSession(session: BrowserSession, opts: AgentRunOptions): AgentSession {
   const config = activeProviderConfig(settings);
   if (typeof config === "string") throw new Error(config);
   return new AgentSession({
@@ -494,6 +494,9 @@ function createAgentForSession(session: BrowserSession, opts: { maxSteps?: numbe
     allowFile: makeFilePermissionGate(),
     // 任务里设置的最大步数；没设置就用 Agent 自己的安全上限
     ...(opts.maxSteps ? { maxSteps: opts.maxSteps } : {}),
+    // 表单任务：按字段核对 submit_result，并告诉模型具体要提交哪些键
+    ...(opts.onSubmitResult ? { onSubmitResult: opts.onSubmitResult } : {}),
+    ...(opts.submitDataDescription ? { submitDataDescription: opts.submitDataDescription } : {}),
   });
 }
 

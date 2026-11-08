@@ -25,28 +25,124 @@ export function normalizeFormData(raw: unknown, fields: FormField[]): Record<str
   const rawObj = raw as Record<string, unknown>;
 
   for (const field of fields) {
-    const val = rawObj[field.name] ?? rawObj[field.id] ?? rawObj[field.name.toLowerCase()];
-    if (val === undefined || val === null || val === "") {
-      result[field.name] = null;
-      continue;
-    }
-
-    if (field.type === "number") {
-      if (typeof val === "number" && !isNaN(val)) {
-        result[field.name] = val;
-      } else if (typeof val === "string") {
-        const cleaned = val.replace(/,/g, "").match(/-?\d+(?:\.\d+)?/);
-        const num = cleaned ? Number(cleaned[0]) : NaN;
-        result[field.name] = isNaN(num) ? null : num;
-      } else {
-        result[field.name] = null;
-      }
-    } else {
-      result[field.name] = typeof val === "string" ? val : String(val);
-    }
+    const key = findFieldKey(rawObj, field);
+    result[field.name] = key === undefined ? null : coerceFieldValue(rawObj[key], field);
   }
 
   return result;
+}
+
+/** 在提交对象里找到对应字段的键：依次尝试字段名、字段 id、小写字段名，以及去掉首尾空格后的键 */
+function findFieldKey(rawObj: Record<string, unknown>, field: FormField): string | undefined {
+  for (const key of [field.name, field.id, field.name.toLowerCase()]) {
+    if (key in rawObj) return key;
+  }
+  return Object.keys(rawObj).find((k) => k.trim() === field.name);
+}
+
+/** 按字段类型规整单个值；空值或数字字段解析不出数字时返回 null */
+function coerceFieldValue(val: unknown, field: FormField): string | number | null {
+  if (val === undefined || val === null || val === "") return null;
+  if (field.type === "number") {
+    if (typeof val === "number") return isNaN(val) ? null : val;
+    if (typeof val === "string") {
+      const cleaned = val.replace(/,/g, "").match(/-?\d+(?:\.\d+)?/);
+      const num = cleaned ? Number(cleaned[0]) : NaN;
+      return isNaN(num) ? null : num;
+    }
+    return null;
+  }
+  return typeof val === "string" ? val : String(val);
+}
+
+/** 字段的提交格式模板，如 `{"京豆": <数字>, "店名": "<文本>"}` */
+export function submitTemplate(fields: FormField[]): string {
+  const pairs = fields.map((f) => `${JSON.stringify(f.name)}: ${f.type === "number" ? "<数字>" : '"<文本>"'}`);
+  return `{${pairs.join(", ")}}`;
+}
+
+/** `submit_result.data` 参数的说明文字：列出本任务必须使用的键和格式 */
+export function describeSubmitData(fields: FormField[]): string {
+  const list = fields.map((f) => `「${f.name}」${f.type === "number" ? "数字" : "文本"}`).join("；");
+  return `本任务要提交的字段，键名必须与字段名完全一致：${list}。格式：${submitTemplate(fields)}。页面上确实找不到的字段填 null。`;
+}
+
+/** 一次 `submit_result` 的核对结果 */
+export interface SubmitReview {
+  /** 是否通过；不通过时 Agent 需要改正后重新提交 */
+  ok: boolean;
+  /** 给 Agent 的回执（通过）或改正说明（不通过） */
+  message: string;
+  /** 合并本次提交后的完整表单数据（键为字段名） */
+  data: Record<string, string | number | null>;
+  /** 至今已明确提交过的字段名（包括显式提交 null 的） */
+  provided: string[];
+}
+
+/**
+ * 核对 Agent 通过 `submit_result` 提交的数据，并与之前的提交合并。
+ *
+ * 【调用时机】Agent 每次调用 `submit_result` 时，由 `task-runner.ts` 交给执行器的校验回调调用。
+ *
+ * 【规则】
+ * - 本次带上的字段覆盖之前的值，没带上的保留之前的值，便于 Agent 分几次补交；
+ * - 不通过：一个字段都没认出来、数字字段给的不是数字、或有字段至今从未提交过（找不到的应显式提交 null）；
+ * - 未定义的多余键：其余都正确时只提示已忽略，不算失败。
+ * 即使不通过，本次合法的值也会先记下，避免 Agent 放弃重试时丢掉已拿到的数据。
+ *
+ * @param raw Agent 提交的 `data` 对象
+ * @param fields 任务定义的表单字段
+ * @param previous 之前提交合并后的结果；首次提交时不传
+ */
+export function reviewSubmission(
+  raw: Record<string, unknown>,
+  fields: FormField[],
+  previous?: Pick<SubmitReview, "data" | "provided">,
+): SubmitReview {
+  const data: Record<string, string | number | null> = {};
+  for (const f of fields) data[f.name] = previous?.data[f.name] ?? null;
+  const provided = new Set(previous?.provided ?? []);
+
+  const matchedKeys = new Set<string>();
+  const accepted: string[] = [];
+  const badNumbers: string[] = [];
+  const badNames = new Set<string>();
+  for (const field of fields) {
+    const key = findFieldKey(raw, field);
+    if (key === undefined) continue;
+    matchedKeys.add(key);
+    const value = coerceFieldValue(raw[key], field);
+    const given = raw[key];
+    if (value === null && given !== null && given !== undefined && given !== "") {
+      badNumbers.push(`「${field.name}」应为纯数字，收到：${JSON.stringify(given)}`);
+      badNames.add(field.name);
+      continue;
+    }
+    data[field.name] = value;
+    provided.add(field.name);
+    accepted.push(field.name);
+  }
+  const unknownKeys = Object.keys(raw).filter((k) => !matchedKeys.has(k));
+  const missing = fields.filter((f) => !provided.has(f.name) && !badNames.has(f.name)).map((f) => f.name);
+
+  const recorded = accepted.map((name) => `「${name}」= ${JSON.stringify(data[name])}`).join("，");
+  const unknownNote = unknownKeys.length ? `未定义的键：${unknownKeys.join("、")}` : "";
+  const ok = accepted.length > 0 && badNumbers.length === 0 && missing.length === 0;
+
+  if (ok) {
+    const lines = [`已记录：${recorded}。`];
+    if (unknownNote) lines.push(`${unknownNote}（已忽略）。`);
+    return { ok, message: lines.join("\n"), data, provided: [...provided] };
+  }
+
+  const problems: string[] = [];
+  if (unknownNote) problems.push(`${unknownNote}（data 的键必须是字段名本身）`);
+  if (missing.length) problems.push(`缺少字段：${missing.map((n) => `「${n}」`).join("、")}（页面上确实找不到的请显式提交 null）`);
+  problems.push(...badNumbers);
+  const lines = ["提交未通过，请修正后重新调用 submit_result：", ...problems.map((p) => `- ${p}`)];
+  if (recorded) lines.push(`本次已先记下：${recorded}。`);
+  lines.push(`正确格式：{"data": ${submitTemplate(fields)}}`);
+  return { ok, message: lines.join("\n"), data, provided: [...provided] };
 }
 
 /**

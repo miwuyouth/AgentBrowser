@@ -1,10 +1,21 @@
-import type { AgentSession } from "@agent-browser/agent";
+import type { AgentSession, SubmitCheck } from "@agent-browser/agent";
 import type { BrowserSession } from "@agent-browser/bridge";
 import { randomBytes } from "node:crypto";
 import { formatProfileStamp, getRunStore, loadTasks, resolveOrCreateProfile, saveTasks } from "./storage.ts";
 import { DEFAULT_ADVICE, describeStop, describeTimeout, RunStopped } from "./run-stop.ts";
-import { normalizeFormData, tryExtractJsonFallback } from "./form-extract.ts";
+import { describeSubmitData, reviewSubmission, submitTemplate, tryExtractJsonFallback, type SubmitReview } from "./form-extract.ts";
 import { capLog, errorMessage, lightRun, type AppState, type FormField, type RunRecord, type RunStep, type TaskItem, type UiEvent } from "./shared.ts";
+
+
+/** 创建 AgentSession 时随任务传入的运行选项 */
+export interface AgentRunOptions {
+  /** 任务设置的最大步数 */
+  maxSteps?: number;
+  /** 核对 `submit_result` 提交内容的回调 */
+  onSubmitResult?: (data: Record<string, unknown>) => SubmitCheck;
+  /** 本任务 `submit_result.data` 的参数说明 */
+  submitDataDescription?: string;
+}
 
 /**
  * 毫秒耗时格式化为 mm:ss 字符串。
@@ -57,7 +68,7 @@ export class TaskRunner {
     private getAppState: () => AppState,
     private getOrStartBrowser: (kernelId: string, profileId: string, initialUrl?: string) => Promise<BrowserSession>,
     private closeBrowser: () => Promise<void>,
-    private createAgent: (browser: BrowserSession, opts: { maxSteps?: number }) => AgentSession,
+    private createAgent: (browser: BrowserSession, opts: AgentRunOptions) => AgentSession,
   ) {}
 
   /**
@@ -252,7 +263,10 @@ export class TaskRunner {
       const browserSession = await this.getOrStartBrowser(kernel.id, profile.id, initialUrl);
 
       // 2. 检查模型配置并实例化 Agent
-      const agentSession = this.createAgent(browserSession, task.maxSteps ? { maxSteps: task.maxSteps } : {});
+      const agentSession = this.createAgent(browserSession, {
+        ...(task.maxSteps ? { maxSteps: task.maxSteps } : {}),
+        ...this.submitOptions(task),
+      });
       this.currentAgent = agentSession;
 
       // 3. 运行真实 Agent 循环
@@ -302,6 +316,30 @@ export class TaskRunner {
   }
 
   /**
+   * 生成本次运行的 `submit_result` 相关选项（任务没有表单字段时返回空对象）。
+   *
+   * 【调用时机】`runTask` 创建 AgentSession 时调用，每次运行一套，提交状态不跨运行。
+   *
+   * 【作用】
+   * - 把本任务的字段名和格式写进 `submit_result.data` 的参数说明，让模型知道该用哪些键；
+   * - 每次提交都按字段核对（见 `reviewSubmission`），合并后的数据写入运行结果，
+   *   核对结论作为工具结果回给 Agent：格式不对时 Agent 能看到错误并重新提交。
+   */
+  private submitOptions(task: TaskItem): Pick<AgentRunOptions, "onSubmitResult" | "submitDataDescription"> {
+    const fields = task.fields;
+    if (!fields?.length) return {};
+    let last: SubmitReview | undefined;
+    return {
+      submitDataDescription: describeSubmitData(fields),
+      onSubmitResult: (data) => {
+        last = reviewSubmission(data, fields, last);
+        if (this.activeRun) this.activeRun.result = { kind: "form", data: last.data, fields };
+        return last.ok ? { ok: true, message: last.message } : { ok: false, error: last.message };
+      },
+    };
+  }
+
+  /**
    * 执行与 Agent 的多轮真实交互循环。
    *
    * 【调用时机】
@@ -336,7 +374,8 @@ export class TaskRunner {
             (f) =>
               `- 「${f.name}」（类型：${f.type === "number" ? "数字" : "文本"}${f.description ? `，要求：${f.description}` : ""}）`,
           ),
-          '在从页面收集到信息后，必须调用 submit_result 工具提交提取的数据，参数格式：{"data": { "字段名": 字段值 }}。数字类型请填纯数字。完成提交后在最终回复中简要总结。',
+          `在从页面收集到信息后，必须调用 submit_result 工具提交，参数格式：{"data": ${submitTemplate(task.fields!)}}。键名必须与上面的字段名完全一致，数字类型填纯数字，页面上确实找不到的字段填 null。`,
+          "submit_result 会返回核对结果；若返回错误，请按提示修正后重新提交，直到提交成功，再在最终回复中简要总结。",
         ].join("\n")
       : "";
 
@@ -370,7 +409,9 @@ export class TaskRunner {
           pendingThought = event.toolCalls.length > 0 ? event.text.trim() : "";
           if (event.toolCalls.length === 0 && event.text.trim()) {
             this.activeRun.summary = event.text;
-            if (hasFields && !this.activeRun.result) {
+            const current = this.activeRun.result;
+            const nothingYet = !current || (current.kind === "form" && Object.values(current.data).every((v) => v === null));
+            if (hasFields && nothingYet) {
               const fallback = tryExtractJsonFallback(event.text, task.fields!);
               if (fallback) {
                 this.activeRun.result = {
@@ -384,15 +425,6 @@ export class TaskRunner {
             this.emitEvent({ type: "run_update", run: lightRun(this.activeRun) });
           }
         } else if (event.type === "tool_call") {
-          if (event.name === "submit_result" && hasFields && event.input && typeof event.input === "object") {
-            const rawData = (event.input as { data?: unknown }).data ?? event.input;
-            const normalized = normalizeFormData(rawData, task.fields!);
-            this.activeRun.result = {
-              kind: "form",
-              data: normalized,
-              fields: task.fields!,
-            };
-          }
           const newStep: RunStep = {
             // 编号统一按当前步数 + 1，避免和「插话」步骤撞号（截图文件名也用它）
             stepNumber: this.activeRun.steps.length + 1,
