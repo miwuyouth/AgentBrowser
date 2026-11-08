@@ -70,10 +70,21 @@ body {
   -webkit-font-smoothing: antialiased;
   font-variant-numeric: tabular-nums;
   overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 button, input, textarea, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
+input, textarea {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.selectable, .result-text, code, pre {
+  user-select: text;
+  -webkit-user-select: text;
+}
 
 svg.icon {
   width: 16px;
@@ -155,7 +166,7 @@ svg.icon {
 
 .main { overflow: auto; }
 
-.page { max-width: 880px; margin: 0 auto; padding: 44px 48px 64px; }
+.page { width: 100%; padding: 44px 48px 64px; }
 .page-head { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 28px; }
 .page-title { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.25; }
 .page-desc { margin-top: 4px; color: var(--text-2); }
@@ -393,7 +404,7 @@ svg.icon {
 .link-btn.danger:hover { color: var(--err); }
 
 .action-bar { position: sticky; bottom: 0; z-index: 2; border-top: 1px solid var(--line); background: color-mix(in srgb, var(--bg) 86%, transparent); backdrop-filter: saturate(1.4) blur(14px); }
-.action-bar-inner { display: flex; align-items: center; gap: 10px; max-width: 880px; margin: 0 auto; padding: 14px 48px; }
+.action-bar-inner { display: flex; align-items: center; gap: 10px; width: 100%; padding: 14px 48px; }
 .sum { display: flex; flex: 1; align-items: center; gap: 12px; min-width: 0; font-size: 14px; }
 .sum .ic { display: grid; place-items: center; flex: none; width: 32px; height: 32px; border-radius: 9px; background: var(--active); }
 .sum .tx { min-width: 0; line-height: 1.35; }
