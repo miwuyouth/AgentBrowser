@@ -193,7 +193,7 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
         url: url.trim(),
         doneCondition: doneCondition.trim(),
         fields: fields
-          .map((f) => ({ ...f, name: f.name.trim(), description: f.description?.trim() || undefined }))
+          .map((f) => ({ ...f, name: f.name.trim().slice(0, 30), description: f.description?.trim().slice(0, 120) || undefined }))
           .filter((f) => f.name !== ""),
         maxSteps: stepsValue!,
         timeoutMinutes: timeoutValue!,
@@ -318,8 +318,9 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
                   <div class="form-field-col name">
                     <input
                       class="input"
-                      placeholder="字段名称，例如：商品价格"
+                      placeholder="字段名，如：商品价格"
                       value={f.name}
+                      maxLength={30}
                       onInput={(e) => updateField(f.id, { name: e.currentTarget.value })}
                     />
                   </div>
@@ -338,6 +339,7 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
                       class="input"
                       placeholder="提取说明（可选，例如：包含单位或纯数字）"
                       value={f.description ?? ""}
+                      maxLength={120}
                       onInput={(e) => updateField(f.id, { description: e.currentTarget.value })}
                     />
                   </div>

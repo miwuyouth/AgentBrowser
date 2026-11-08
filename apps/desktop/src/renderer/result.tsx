@@ -66,8 +66,10 @@ function FormResultView({ data, fields }: { data: Record<string, string | number
           return (
             <div key={f.id || f.name} class="form-result-row">
               <div class="form-result-label">
-                <span class="form-result-name">{f.name}</span>
-                <span class="form-result-badge">{f.type === "number" ? "数字" : "文本"}</span>
+                <div class="form-result-label-head">
+                  <span class="form-result-name" title={f.name}>{f.name}</span>
+                  <span class="form-result-badge">{f.type === "number" ? "数字" : "文本"}</span>
+                </div>
                 {f.description && <span class="form-result-desc" title={f.description}>{f.description}</span>}
               </div>
 
