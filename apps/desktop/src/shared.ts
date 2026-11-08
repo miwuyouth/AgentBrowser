@@ -69,8 +69,6 @@ export interface TaskItem {
   maxSteps: number;
   /** 单次运行的超时截止时间（分钟） */
   timeoutMinutes: number;
-  /** 期望的结果展示格式 */
-  resultFormat: "text" | "json" | "markdown";
   /** 最近一次运行的状态 */
   lastStatus: TaskStatus;
   /** 最近一次运行发生的时间描述（如 "刚刚"、"10分钟前"） */

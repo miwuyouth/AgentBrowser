@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from "preact/hooks";
-import { AUTO_PROFILE_LABEL, AUTO_PROFILE_VALUE, errorMessage, type AppState, type FormField, type TaskItem } from "../../shared.ts";
+import { AUTO_PROFILE_LABEL, AUTO_PROFILE_VALUE, errorMessage, type AppState, type FormField } from "../../shared.ts";
 import { Icon } from "../icons.tsx";
 import { PageHead } from "../page.tsx";
 import { nextSlot, scheduleLabel, type RepeatKind } from "../../schedule.ts";
 import type { Navigate } from "../sidebar.tsx";
 import { formatUpcoming } from "../time.ts";
 
-type ResultFormat = TaskItem["resultFormat"];
 type Repeat = "manual" | Exclude<RepeatKind, "manual" | "once">;
 const REPEATS: { value: Repeat; label: string }[] = [
   { value: "manual", label: "手动运行" },
@@ -21,29 +20,6 @@ const DEFAULT_TIMEOUT_MINUTES = 10;
 
 /** 正整数且不超过上限校验器；合法返回解析数值，否则返回 null */
 const toLimit = (v: string, max: number) => (/^\d+$/.test(v.trim()) && Number(v) >= 1 && Number(v) <= max ? Number(v) : null);
-
-const FORMATS: { value: ResultFormat; label: string }[] = [
-  { value: "text", label: "文字" },
-  { value: "json", label: "JSON" },
-  { value: "markdown", label: "Markdown" },
-];
-
-/**
- * 根据任务目标（Prompt）自动推导任务名称。
- *
- * 【调用时机】
- * 用户未显式填写自定义任务名称时，在输入框展示占位符或执行保存（`save`）时调用。
- *
- * 【作用】
- * 取目标描述第一行的前 24 个非空字符，超出则附加省略号，作为自动生成的直观名称。
- *
- * @param goal 任务目标提示词
- * @returns 自动裁剪生成的任务名称
- */
-function autoName(goal: string): string {
-  const line = (goal.trim().split("\n")[0] ?? "").replace(/\s+/g, " ");
-  return line.length > 24 ? `${line.slice(0, 24)}…` : line;
-}
 
 /**
  * 统一样式的表单下拉选择控件。
@@ -73,7 +49,7 @@ function Select({ id, value, onChange, children }: { id: string; value: string; 
  *
  * 【作用】
  * 完整的任务配置工作台：
- * 1. 录入核心目标 Prompt（支持高度自动撑开）与可选起始网址；
+ * 1. 录入任务名称（必填）、核心目标 Prompt（支持高度自动撑开）与可选起始网址；
  * 2. 调度执行排程（支持手动或每天/工作日/每周一/每6小时的重复周期与时间）；
  * 3. 结构化表单设计器（支持定义让 Agent 在完成目标后提取填写的字段名、字段类型与说明）；
  * 4. 高级参数折叠面板（内核与 Profile 选择、自动创建新 Profile 开关、完成判定条件、最大步数、超时时间、自动关闭浏览器选项等）；
@@ -101,7 +77,6 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
   /** 数字输入框用字符串存，方便用户清空重填；保存时再转成整数 */
   const [maxSteps, setMaxSteps] = useState(String(task?.maxSteps ?? DEFAULT_MAX_STEPS));
   const [timeoutMinutes, setTimeoutMinutes] = useState(String(task?.timeoutMinutes ?? DEFAULT_TIMEOUT_MINUTES));
-  const [resultFormat, setResultFormat] = useState<ResultFormat>(task?.resultFormat ?? "text");
   const [autoClose, setAutoClose] = useState(task?.autoClose ?? true);
   const [repeat, setRepeat] = useState<Repeat>(
     task?.mode === "cron" && task.repeatKind && task.repeatKind !== "manual" && task.repeatKind !== "once" ? task.repeatKind : "manual",
@@ -139,12 +114,10 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
     setFields((prev) => prev.filter((f) => f.id !== id));
   };
 
-  // 目标输入框的自动增高由 CSS field-sizing: content 负责，这里只用于聚焦
-  const goalRef = useRef<HTMLTextAreaElement>(null);
-
-  // 新建任务时直接把光标放在目标输入框（autofocus 属性在页面内跳转时不生效）
+  // 新建任务时直接把光标放在最上面的名称输入框（autofocus 属性在页面内跳转时不生效）
+  const nameRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    if (!task) goalRef.current?.focus();
+    if (!task) nameRef.current?.focus();
   }, []);
 
   if (taskId && !task) {
@@ -174,7 +147,20 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
   const upcoming = scheduled && timeOk ? nextSlot({ mode: "cron", repeatKind: repeat, repeatTime: time }, Date.now()) : null;
   const stepsValue = toLimit(maxSteps, 500);
   const timeoutValue = toLimit(timeoutMinutes, 600);
-  const canSave = goal.trim() !== "" && timeOk && stepsValue !== null && timeoutValue !== null && !saving;
+  /** 第一个导致无法保存的原因；为空表示表单可以保存，用于底部条提示与按钮悬浮说明 */
+  const blocker =
+    name.trim() === ""
+      ? "请填写任务名称"
+      : goal.trim() === ""
+        ? "请填写任务目标"
+        : !timeOk
+          ? "请填写正确的运行时间"
+          : stepsValue === null
+            ? "最大步数需为 1–500 的整数"
+            : timeoutValue === null
+              ? "超时时间需为 1–600 分钟的整数"
+              : "";
+  const canSave = blocker === "" && !saving;
 
   /**
    * 保存任务并选择性地立即发起执行。
@@ -197,7 +183,7 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
       const autoProfile = profileValue === AUTO_PROFILE_VALUE;
       const saved = await window.agentApi.saveTask({
         ...(task ? { id: task.id } : {}),
-        name: name.trim() || autoName(goal),
+        name: name.trim(),
         goal: goal.trim(),
         url: url.trim(),
         doneCondition: doneCondition.trim(),
@@ -210,7 +196,6 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
         autoProfile,
         ...(autoProfile ? {} : { profileId: profileValue }),
         autoClose,
-        resultFormat,
         ...(scheduled
           ? { mode: "cron" as const, repeatKind: repeat, repeatTime: time, schedule: scheduleLabel(repeat, time) }
           : { mode: "now" as const, repeatKind: "manual" as const, schedule: "手动" }),
@@ -249,10 +234,21 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
 
         <div class="card">
           <div class="goal">
+            <div class="goal-name">
+              <label for="task-name">任务名称</label>
+              <input
+                id="task-name"
+                ref={nameRef}
+                class="input"
+                required
+                placeholder="例如：每日签到"
+                value={name}
+                onInput={(e) => setName(e.currentTarget.value)}
+              />
+            </div>
             <label for="task-goal">任务目标</label>
             <textarea
               id="task-goal"
-              ref={goalRef}
               rows={1}
               placeholder="例如：打开商城首页，进入个人中心，完成每日签到"
               value={goal}
@@ -301,6 +297,13 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
             </div>
           ) : (
             <div class="form-fields-list">
+              <div class="form-field-row form-field-header" aria-hidden="true">
+                <span class="form-field-num">#</span>
+                <span class="form-field-col name">字段名称</span>
+                <span class="form-field-col type">类型</span>
+                <span class="form-field-col desc">提取说明</span>
+                <span class="form-field-del-spacer" />
+              </div>
               {fields.map((f, i) => (
                 <div key={f.id} class="form-field-row">
                   <span class="form-field-num">{i + 1}</span>
@@ -349,20 +352,10 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
           <button type="button" class="adv" aria-expanded={advOpen} onClick={() => setAdvOpen(!advOpen)}>
             <Icon name="chevron" size={14} />
             高级设置
-            <small>名称、内核、Profile、步数与超时</small>
+            <small>内核、Profile、步数与超时</small>
           </button>
           {advOpen && (
             <div class="advbody">
-              <div class="field full">
-                <label for="task-name">任务名称</label>
-                <input
-                  id="task-name"
-                  class="input"
-                  placeholder={autoName(goal) || "默认取目标的前几个字"}
-                  value={name}
-                  onInput={(e) => setName(e.currentTarget.value)}
-                />
-              </div>
               <div class="field">
                 <label for="task-kernel">浏览器内核</label>
                 <Select
@@ -428,16 +421,6 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
                 <p class="hint-text">运行超过这个时间会自动终止。</p>
               </div>
               <div class="field">
-                <label>结果格式</label>
-                <div class="seg">
-                  {FORMATS.map((f) => (
-                    <span key={f.value} class={resultFormat === f.value ? "on" : ""} onClick={() => setResultFormat(f.value)}>
-                      {f.label}
-                    </span>
-                  ))}
-                </div>
-              </div>
-              <div class="field">
                 <label>完成后关闭浏览器</label>
                 <button type="button" role="switch" aria-checked={autoClose} class={`switch ${autoClose ? "on" : ""}`} onClick={() => setAutoClose(!autoClose)}>
                   <span>任务结束后自动关闭</span>
@@ -464,6 +447,11 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
             <div class="tx">
               {error ? (
                 <b class="error-text-inline">{error}</b>
+              ) : blocker ? (
+                <>
+                  <b>{blocker}</b>
+                  <small>填好后才能保存</small>
+                </>
               ) : scheduled ? (
                 <>
                   <b>{scheduleLabel(repeat, time)}</b> 自动运行{upcoming && <> · {repeat === "hours" ? "首次" : "下次"} <b>{formatUpcoming(upcoming)}</b></>}
@@ -483,19 +471,19 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
             取消
           </button>
           {scheduled ? (
-            <button type="button" class="btn btn-primary btn-lg" disabled={!canSave} onClick={() => void save(false)}>
+            <button type="button" class="btn btn-primary btn-lg" disabled={!canSave} title={blocker || undefined} onClick={() => void save(false)}>
               {task ? "保存" : "保存并启用"}
             </button>
           ) : (
             <>
-              <button type="button" class="btn" disabled={!canSave} onClick={() => void save(false)}>
+              <button type="button" class="btn" disabled={!canSave} title={blocker || undefined} onClick={() => void save(false)}>
                 仅保存
               </button>
               <button
                 type="button"
                 class="btn btn-primary btn-lg"
                 disabled={!canSave || state.running}
-                title={state.running ? "已有任务正在运行" : undefined}
+                title={blocker || (state.running ? "已有任务正在运行" : undefined)}
                 onClick={() => void save(true)}
               >
                 保存并运行

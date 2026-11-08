@@ -456,7 +456,6 @@ function registerIpc() {
         repeatTime: taskData.repeatTime || "08:30",
         maxSteps: taskData.maxSteps || 30,
         timeoutMinutes: taskData.timeoutMinutes || 10,
-        resultFormat: taskData.resultFormat || "text",
         lastStatus: "none",
         lastRunTime: "—",
         lastDuration: "—",

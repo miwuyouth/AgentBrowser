@@ -298,7 +298,7 @@ export class TaskRunner {
    * 在 `runTask` 成功初始化浏览器会话与 AgentSession 后内部调用。
    *
    * 【作用】
-   * 1. 组装输入提示词（包含目标、起始网址、完成判定条件、表单提取要求及输出格式）；
+   * 1. 组装输入提示词（包含目标、起始网址、完成判定条件、表单提取要求）；
    * 2. 调用 `agent.send` 发送目标并实时监听流式事件：
    *    - `done`: 捕获完成状态与停止原因；
    *    - `assistant_turn`: 捕获最终文本回复，并进行表单提取兜底尝试；
@@ -335,7 +335,6 @@ export class TaskRunner {
       task.url ? `起始网址：${task.url}` : "",
       task.doneCondition ? `完成判定条件：${task.doneCondition}` : "",
       formPrompt,
-      task.resultFormat ? `结果格式要求：${task.resultFormat}` : "",
     ]
       .filter(Boolean)
       .join("\n");

@@ -460,6 +460,7 @@ svg.icon {
 .advbody .full { grid-column: 1 / -1; }
 
 .goal { padding: 20px 24px; }
+.goal-name { margin-bottom: 20px; }
 .goal label, .goal-extra label { display: block; margin-bottom: 8px; font-size: 12px; font-weight: 500; color: var(--text-2); }
 /* 与 .input 同一套边框/背景/聚焦样式；field-sizing 让浏览器按内容自动增高，超过 max-height 后出现滚动条 */
 .goal textarea {
@@ -492,13 +493,16 @@ svg.icon {
 .form-builder-title { font-size: 13px; font-weight: 600; color: var(--text); }
 .form-builder-desc { margin-top: 3px; font-size: 12px; color: var(--text-3); }
 .form-builder-empty { padding: 18px 14px; border: 1px dashed var(--line-strong); border-radius: var(--radius); background: var(--bg); font-size: 12.5px; color: var(--text-3); text-align: center; }
-.form-fields-list { display: flex; flex-direction: column; gap: 10px; }
-.form-field-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); }
-.form-field-num { font-size: 12px; font-weight: 600; color: var(--text-3); width: 16px; text-align: center; flex: none; }
+.form-fields-list { display: flex; flex-direction: column; gap: 8px; }
+.form-field-row { display: flex; align-items: center; gap: 8px; }
+.form-field-num { font-size: 12px; font-weight: 500; color: var(--text-3); width: 14px; text-align: right; flex: none; font-variant-numeric: tabular-nums; }
 .form-field-col.name { width: 180px; flex: none; }
 .form-field-col.type { width: 90px; flex: none; }
 .form-field-col.desc { flex: 1; min-width: 0; }
 .form-field-del { color: var(--text-3); flex: none; }
+.form-field-header { margin-bottom: -2px; font-size: 12px; font-weight: 500; color: var(--text-3); }
+.form-field-header .form-field-col { padding-left: 13px; }
+.form-field-del-spacer { width: 32px; flex: none; }
 .form-field-del:hover { color: var(--err); background: color-mix(in srgb, var(--err) 10%, transparent); }
 
 @keyframes fade-in { from { opacity: 0; transform: translateY(-4px); } }
