@@ -6,7 +6,17 @@ import { Modal } from "../modal.tsx";
 import { PageHead } from "../page.tsx";
 import { toast } from "../toast.tsx";
 
-/** 调用一个返回 {ok, message} 的操作，并把结果用轻提示告诉用户 */
+/**
+ * 包装执行带状态返回值的异步操作，并统一向用户反馈轻提示。
+ *
+ * 【调用时机】
+ * 在安装/卸载内核、保存 License Key、释放被占用 Profile 等 IPC 调用处触发。
+ *
+ * 【作用】
+ * 执行操作，若返回 ok: false 或抛出异常则展示错误轻提示，否则展示成功提示。
+ *
+ * @param action 异步执行闭包，返回包含 ok 与 message 的对象
+ */
 async function report(action: () => Promise<{ ok: boolean; message: string }>) {
   try {
     const r = await action();
@@ -16,7 +26,17 @@ async function report(action: () => Promise<{ ok: boolean; message: string }>) {
   }
 }
 
-/** 调用一个没有返回值的操作，失败时提示 */
+/**
+ * 包装执行普通无返回值的异步操作，仅在发生异常时弹窗报错。
+ *
+ * 【调用时机】
+ * 在删除 Profile、设为默认 Profile 等无需成功提示的 IPC 调用处触发。
+ *
+ * 【作用】
+ * 尝试执行异步函数，若抛出异常则通过 toast 弹出红色错误提示。
+ *
+ * @param action 异步操作闭包
+ */
 async function attempt(action: () => Promise<unknown>) {
   try {
     await action();
@@ -27,6 +47,26 @@ async function attempt(action: () => Promise<unknown>) {
 
 /* ───────────────────────── Profile ───────────────────────── */
 
+/**
+ * 单个 Profile 列表项行组件。
+ *
+ * 【调用时机】
+ * 在各个内核卡片（`KernelCard`）下方遍历渲染其归属的所有 Profile 时调用。
+ *
+ * 【作用】
+ * 1. 展现 Profile 名称（双击或点击编辑图标支持内联行内重命名）；
+ * 2. 标记是否为全局默认（默认 Profile 带有高亮徽章）；
+ * 3. 展现该 Profile 真实占用的本地磁盘空间大小；
+ * 4. 操作按钮组：
+ *    - "打开"：在独立窗口中拉起浏览器（供用户人工操作或登录网站），若被残留进程锁定则弹出释放引导；
+ *    - "设为默认"：将此 Profile 持久化为全局默认（默认内核随之联动）；
+ *    - "重命名"：进入行内编辑框修改名称；
+ *    - "删除"：物理删除自定义 Profile（内置不可删除 Profile 不提供此按钮）。
+ *
+ * @param profile 目标 Profile 实体
+ * @param kernel 所属浏览器内核实体
+ * @param busy 当前是否有任务正在运行中
+ */
 function ProfileRow({ profile: p, kernel, busy }: { profile: ProfileItem; kernel: KernelItem; busy: boolean }) {
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState(p.name);
@@ -36,6 +76,10 @@ function ProfileRow({ profile: p, kernel, busy }: { profile: ProfileItem; kernel
   const canOpen = kernel.installed && !busy;
   const openTitle = !kernel.installed ? "先安装这个浏览器内核" : busy ? "有任务正在运行" : "打开浏览器，手动登录网站";
 
+  /**
+   * 打开浏览器供用户手动操作。
+   * 【调用时机】用户点击该 Profile 右侧"打开"按钮时调用。
+   */
   const open = async () => {
     try {
       let r = await window.agentApi.openBrowser(p.kernelId, p.id);
@@ -51,11 +95,19 @@ function ProfileRow({ profile: p, kernel, busy }: { profile: ProfileItem; kernel
     }
   };
 
+  /**
+   * 进入重命名编辑状态。
+   * 【调用时机】用户点击重命名笔图标时调用。
+   */
   const startRename = () => {
     settled.current = false;
     setRenaming(true);
   };
 
+  /**
+   * 提交并持久化保存重命名后的 Profile 名称。
+   * 【调用时机】重命名输入框失焦（onBlur）或用户按下 Enter 键时调用。
+   */
   const rename = async () => {
     if (settled.current) return;
     settled.current = true;
@@ -70,6 +122,10 @@ function ProfileRow({ profile: p, kernel, busy }: { profile: ProfileItem; kernel
     }
   };
 
+  /**
+   * 删除自定义 Profile。
+   * 【调用时机】用户点击垃圾桶删除图标时调用。
+   */
   const remove = () => {
     const parts = [`删除 Profile「${p.name}」？`];
     if (p.taskCount > 0) parts.push(`有 ${p.taskCount} 个任务指定了它，删除后会改用其他 Profile。`);
@@ -129,6 +185,18 @@ function ProfileRow({ profile: p, kernel, busy }: { profile: ProfileItem; kernel
   );
 }
 
+/**
+ * 新建 Profile 模态弹窗对话框组件。
+ *
+ * 【调用时机】
+ * 用户在某个内核卡片底部点击"新建 Profile"按钮时浮层渲染。
+ *
+ * 【作用】
+ * 收集用户输入的自定义 Profile 名称，提交调用 `window.agentApi.createProfile` 完成物理目录创建与指纹初始化。
+ *
+ * @param kernel 目标归属内核对象
+ * @param onClose 关闭弹窗回调
+ */
 function NewProfileDialog({ kernel, onClose }: { kernel: KernelItem; onClose: () => void }) {
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
@@ -174,6 +242,24 @@ function NewProfileDialog({ kernel, onClose }: { kernel: KernelItem; onClose: ()
 
 /* ───────────────────────── 浏览器内核（连同它的 Profile） ───────────────────────── */
 
+/**
+ * 单个浏览器内核展示与管理卡片组件。
+ *
+ * 【调用时机】
+ * 在 `EnvView` 主工作区中遍历渲染检测到的所有浏览器内核时调用。
+ *
+ * 【作用】
+ * 1. 展现内核名称、安装状态、版本号或下载进度文字；
+ * 2. 状态操作：提供"下载"、"重试下载"或"卸载"按钮；
+ * 3. 下载过程中展示动态进度条；
+ * 4. 商业授权支持：若该内核需要授权 License 且尚未设置，内联展示 Key 输入表单与官方领取链接；
+ * 5. 罗列归属该内核的所有 Profile 列表，并在内核已安装时提供"新建 Profile"入口。
+ *
+ * @param kernel 目标内核实体
+ * @param profiles 归属该内核的 Profile 列表
+ * @param busy 当前是否有任务在运行中
+ * @param onNew 点击触发新建 Profile 弹窗的回调
+ */
 function KernelCard({ kernel: k, profiles, busy, onNew }: { kernel: KernelItem; profiles: ProfileItem[]; busy: boolean; onNew: () => void }) {
   const [key, setKey] = useState("");
 
@@ -191,6 +277,10 @@ function KernelCard({ kernel: k, profiles, busy, onNew }: { kernel: KernelItem; 
           ? "需要授权 key 才能使用"
           : "未安装";
 
+  /**
+   * 卸载已下载安装的浏览器内核。
+   * 【调用时机】用户点击内核头部的"卸载"按钮并确认时调用。
+   */
   const uninstall = () => {
     const used = k.taskCount > 0 ? `有 ${k.taskCount} 个任务用到它。` : "";
     if (window.confirm(`卸载「${k.name}」？${used}已有的 Profile 数据会保留。`)) void report(() => window.agentApi.uninstallKernel(k.id));
@@ -266,6 +356,21 @@ function KernelCard({ kernel: k, profiles, busy, onNew }: { kernel: KernelItem; 
 
 /* ───────────────────────── 页面 ───────────────────────── */
 
+/**
+ * 运行环境管理工作区视图组件。
+ *
+ * 【调用时机】
+ * 用户点击侧边栏"运行环境"菜单项（`view === "env"`）时在主工作区渲染。
+ *
+ * 【作用】
+ * 统一管理任务执行所依托的底层浏览器内核与 Profile 登录身份环境：
+ * 1. 列表呈现检测到的各浏览器内核卡片（Chromium、指纹型内核等）；
+ * 2. 支持下载、重试、卸载内核；
+ * 3. 在各内核下查看、打开、设为默认、重命名、删除或新建 Profile；
+ * 4. 控制新建 Profile 弹窗的开闭状态。
+ *
+ * @param state 当前全局应用状态
+ */
 export function EnvView({ state }: { state: AppState }) {
   const [creatingIn, setCreatingIn] = useState<KernelItem | null>(null);
 

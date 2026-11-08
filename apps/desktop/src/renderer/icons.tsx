@@ -1,3 +1,7 @@
+/**
+ * 内置矢量图标库（SVG Path 路径定义集合）。
+ * 采用 24x24 视口的极简线性风格图标。
+ */
 const PATHS = {
   tasks: "M9 6h11M9 12h11M9 18h11M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2",
   runs: "M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5M12 7v5l3 2",
@@ -19,8 +23,21 @@ const PATHS = {
   copy: "M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2M16 4h-6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V8l-4-4z",
 } as const;
 
+/** 支持的内置图标名称字面量类型 */
 export type IconName = keyof typeof PATHS;
 
+/**
+ * 统一样式与大小的 SVG 矢量图标组件。
+ *
+ * 【调用时机】
+ * 在侧边栏导航、操作按钮、表单控件及卡片状态展示中广泛渲染。
+ *
+ * 【作用】
+ * 根据传入的名称（name）渲染对应的内嵌 SVG 路径，并应用统一的无障碍隐藏属性（`aria-hidden="true"`）与尺寸配置。
+ *
+ * @param name 图标名称
+ * @param size 图标物理像素尺寸，默认为 16
+ */
 export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
   return (
     <svg class="icon" viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">

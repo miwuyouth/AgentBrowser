@@ -2,7 +2,16 @@ import assert from "node:assert/strict";
 import { normalizeFormData, tryExtractJsonFallback } from "./form-extract.ts";
 import type { FormField } from "./shared.ts";
 
+/**
+ * 结构化表单提取与规范化清洗单元测试套件。
+ */
+
 let passed = 0;
+/**
+ * 简易单元测试断言运行包装器。
+ * 【调用时机】执行每个独立用例时调用。
+ * 【作用】执行测试逻辑，递增通过计数并在控制台输出成功勾选日志。
+ */
 const test = (name: string, fn: () => void) => {
   fn();
   passed++;

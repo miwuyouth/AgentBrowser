@@ -2,7 +2,23 @@ import type { ComponentChildren } from "preact";
 import { useEffect } from "preact/hooks";
 import { Icon } from "./icons.tsx";
 
-/** 通用弹窗：点遮罩或按 Esc 关闭。新建 Profile、设置都用它 */
+/**
+ * 通用模态对话框容器组件。
+ *
+ * 【调用时机】
+ * 在系统设置弹窗（`SettingsModal`）、新建 Profile 弹窗等需要浮层阻断交互的场景中渲染。
+ *
+ * 【作用】
+ * 1. 渲染全屏暗色半透明遮罩与居中浮窗结构；
+ * 2. 键盘交互：监听全局键盘事件，当用户按下 Escape 键时自动触发 `onClose`；
+ * 3. 鼠标交互：点击遮罩背景自动关闭，同时对内部容器阻止事件冒泡防止误触；
+ * 4. 规范无障碍访问属性（`role="dialog"`、`aria-modal="true"`）。
+ *
+ * @param title 弹窗标题
+ * @param onClose 关闭回调函数
+ * @param width 可选的自定义最大宽度
+ * @param children 弹窗内部插槽内容
+ */
 export function Modal({
   title,
   onClose,

@@ -18,20 +18,42 @@ const REPEATS: { value: Repeat; label: string }[] = [
 const TIME_RE = /^\d{2}:\d{2}$/;
 const DEFAULT_MAX_STEPS = 30;
 const DEFAULT_TIMEOUT_MINUTES = 10;
-/** 正整数且不超过上限；否则返回 null */
+
+/** 正整数且不超过上限校验器；合法返回解析数值，否则返回 null */
 const toLimit = (v: string, max: number) => (/^\d+$/.test(v.trim()) && Number(v) >= 1 && Number(v) <= max ? Number(v) : null);
+
 const FORMATS: { value: ResultFormat; label: string }[] = [
   { value: "text", label: "文字" },
   { value: "json", label: "JSON" },
   { value: "markdown", label: "Markdown" },
 ];
 
-/** 没填名称时，取目标的第一行前 24 个字 */
+/**
+ * 根据任务目标（Prompt）自动推导任务名称。
+ *
+ * 【调用时机】
+ * 用户未显式填写自定义任务名称时，在输入框展示占位符或执行保存（`save`）时调用。
+ *
+ * 【作用】
+ * 取目标描述第一行的前 24 个非空字符，超出则附加省略号，作为自动生成的直观名称。
+ *
+ * @param goal 任务目标提示词
+ * @returns 自动裁剪生成的任务名称
+ */
 function autoName(goal: string): string {
   const line = (goal.trim().split("\n")[0] ?? "").replace(/\s+/g, " ");
   return line.length > 24 ? `${line.slice(0, 24)}…` : line;
 }
 
+/**
+ * 统一样式的表单下拉选择控件。
+ *
+ * 【调用时机】
+ * 在任务内核选择、Profile 选择、表单字段类型选择时渲染。
+ *
+ * 【作用】
+ * 包装标准 HTML `<select>`，附加右侧自定义箭头图标与统一样式。
+ */
 function Select({ id, value, onChange, children }: { id: string; value: string; onChange: (v: string) => void; children: preact.ComponentChildren }) {
   return (
     <div class="select-wrap">
@@ -43,6 +65,24 @@ function Select({ id, value, onChange, children }: { id: string; value: string; 
   );
 }
 
+/**
+ * 任务创建与编辑主页面视图组件。
+ *
+ * 【调用时机】
+ * 用户点击侧边栏"新建任务"（⌘N）、从任务卡片进入编辑模式、或通过快捷链接跳转时（`view === "editor"`）在主工作区渲染。
+ *
+ * 【作用】
+ * 完整的任务配置工作台：
+ * 1. 录入核心目标 Prompt（支持高度自动撑开）与可选起始网址；
+ * 2. 调度执行排程（支持手动或每天/工作日/每周一/每6小时的重复周期与时间）；
+ * 3. 结构化表单设计器（支持定义让 Agent 在完成目标后提取填写的字段名、字段类型与说明）；
+ * 4. 高级参数折叠面板（内核与 Profile 选择、自动创建新 Profile 开关、完成判定条件、最大步数、超时时间、自动关闭浏览器选项等）；
+ * 5. 底部固定条：实时计算并预览调度规则或内核 Profile 摘要，支持「仅保存」、「保存并运行」或「保存并启用」。
+ *
+ * @param state 当前全局应用状态
+ * @param taskId 当前编辑的任务 ID；若新建任务则为 undefined
+ * @param go 路由导航函数
+ */
 export function EditorView({ state, taskId, go }: { state: AppState; taskId: string | undefined; go: Navigate }) {
   const task = taskId ? state.tasks.find((t) => t.id === taskId) : undefined;
 
@@ -72,6 +112,10 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
   const [error, setError] = useState("");
   const [fields, setFields] = useState<FormField[]>(task?.fields ?? []);
 
+  /**
+   * 添加一个结构化表单提取字段。
+   * 【调用时机】用户在"结果表单"卡片中点击"添加字段"按钮时调用。
+   */
   const addField = () => {
     setFields((prev) => [
       ...prev,
@@ -79,39 +123,33 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
     ]);
   };
 
+  /**
+   * 更新指定字段的部分配置。
+   * 【调用时机】用户修改字段名称、类型下拉选项或说明输入框时调用。
+   */
   const updateField = (id: string, patch: Partial<FormField>) => {
     setFields((prev) => prev.map((f) => (f.id === id ? { ...f, ...patch } : f)));
   };
 
+  /**
+   * 删除指定的表单提取字段。
+   * 【调用时机】用户点击该字段行右侧的删除垃圾桶图标时调用。
+   */
   const removeField = (id: string) => {
     setFields((prev) => prev.filter((f) => f.id !== id));
   };
 
+  // 目标输入框的自动增高由 CSS field-sizing: content 负责，这里只用于聚焦
   const goalRef = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => {
-    const el = goalRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    const borderOffset = el.offsetHeight - el.clientHeight;
-    el.style.height = `${Math.max(100, el.scrollHeight + borderOffset)}px`;
-  }, [goal]);
 
   // 新建任务时直接把光标放在目标输入框（autofocus 属性在页面内跳转时不生效）
   useEffect(() => {
     if (!task) goalRef.current?.focus();
   }, []);
 
-  const back = (
-    <button type="button" class="back" onClick={() => go("tasks")}>
-      <Icon name="back" size={14} />
-      任务
-    </button>
-  );
-
   if (taskId && !task) {
     return (
       <div class="page">
-        {back}
         <div class="empty">
           <h2>找不到这个任务</h2>
           <p>它可能已经被删除了。</p>
@@ -138,6 +176,20 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
   const timeoutValue = toLimit(timeoutMinutes, 600);
   const canSave = goal.trim() !== "" && timeOk && stepsValue !== null && timeoutValue !== null && !saving;
 
+  /**
+   * 保存任务并选择性地立即发起执行。
+   *
+   * 【调用时机】
+   * 用户在页面底部操作条点击「保存」、「仅保存」或「保存并运行」时调用。
+   *
+   * 【作用】
+   * 1. 组装表单与高级参数；
+   * 2. 调用 IPC `window.agentApi.saveTask` 写入本地持久化 tasks.json；
+   * 3. 若 `thenRun === true`，通过 IPC 立即触发任务执行并跳转至实时监控页面（`go("live")`）；
+   * 4. 否则返回主任务列表（`go("tasks")`）。
+   *
+   * @param thenRun 保存完成后是否立即拉起任务执行
+   */
   const save = async (thenRun: boolean) => {
     setSaving(true);
     setError("");
@@ -175,6 +227,15 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
     }
   };
 
+  /**
+   * 删除当前编辑的任务。
+   *
+   * 【调用时机】
+   * 用户点击高级设置底部的"删除这个任务"链接并确认对话框时调用。
+   *
+   * 【作用】
+   * 弹出系统确认框；确认后调用 IPC `window.agentApi.deleteTask(task.id)` 物理删除并返回任务列表。
+   */
   const remove = async () => {
     if (!task || !window.confirm(`删除任务「${task.name}」？它的运行记录会保留。`)) return;
     await window.agentApi.deleteTask(task.id);
@@ -184,7 +245,6 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
   return (
     <div class="editor">
       <div class="page">
-        {back}
         <PageHead title={task ? "编辑任务" : "新建任务"} desc="用一句话告诉 Agent 要做什么" />
 
         <div class="card">
@@ -193,7 +253,7 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
             <textarea
               id="task-goal"
               ref={goalRef}
-              rows={3}
+              rows={1}
               placeholder="例如：打开商城首页，进入个人中心，完成每日签到"
               value={goal}
               onInput={(e) => setGoal(e.currentTarget.value)}

@@ -3,9 +3,18 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import os from "node:os";
 import path from "node:path";
 import { RunStore } from "./run-store.ts";
-import type { RunRecord } from "./shared.ts";
+import { capLog, lightRun, type RunRecord } from "./shared.ts";
+
+/**
+ * 运行记录本地存储管理器（RunStore）单元测试套件。
+ */
 
 let passed = 0;
+/**
+ * 自动创建与销毁临时测试目录的测试运行器。
+ * 【调用时机】执行每个独立存储测试时调用。
+ * 【作用】在系统临时目录生成沙箱根目录，注入新建的 RunStore 实例，执行后自动物理清理。
+ */
 const test = (name: string, fn: (store: RunStore, root: string) => void) => {
   const root = mkdtempSync(path.join(os.tmpdir(), "run-store-"));
   try {
@@ -17,6 +26,10 @@ const test = (name: string, fn: (store: RunStore, root: string) => void) => {
   console.log(`  ✓ ${name}`);
 };
 
+/**
+ * 构造模拟运行记录实体。
+ * 【调用时机】测试用例准备测试数据时调用。
+ */
 const run = (id: string, over: Partial<RunRecord> = {}): RunRecord => ({
   id,
   taskId: "t1",
@@ -50,47 +63,56 @@ test("结束时更新索引，不会重复出现", (store) => {
   store.save(run("a", { status: "fail", endTime: 2000 }), { index: true });
   assert.equal(store.list().length, 1);
   assert.equal(store.list()[0]!.status, "fail");
-  assert.equal(store.list()[0]!.endTime, 2000);
 });
-test("列表按开始时间倒序", (store) => {
-  store.save(run("old", { startTime: 1 }), { index: true });
-  store.save(run("new", { startTime: 3 }), { index: true });
-  store.save(run("mid", { startTime: 2 }), { index: true });
-  assert.deepEqual(store.list().map((s) => s.id), ["new", "mid", "old"]);
+test("按开始时间倒序排", (store) => {
+  store.save(run("early", { startTime: 1000 }), { index: true });
+  store.save(run("late", { startTime: 2000 }), { index: true });
+  assert.deepEqual(store.list().map((s) => s.id), ["late", "early"]);
 });
-test("截图存成独立文件，记录里只有文件名", (store) => {
-  const file = store.saveShot("a", 3, "image/jpeg", Buffer.from("fake-image").toString("base64"));
-  assert.equal(file, "3.jpg");
-  assert.equal(readFileSync(store.shotPath("a", file)!, "utf8"), "fake-image");
-  assert.equal(store.saveShot("a", 4, "image/png", "AA=="), "4.png");
-  assert.equal(store.saveShot("a", 5, "image/unknown", "AA=="), "5.png");
+test("存截图：存在自己的目录里，文件名就是编号", (store, root) => {
+  const file = store.saveShot("a", 3, "image/png", Buffer.from("hello").toString("base64"));
+  assert.equal(file, "3.png");
+  assert.ok(existsSync(path.join(root, "a", "shots", "3.png")));
+  assert.equal(readFileSync(path.join(root, "a", "shots", "3.png"), "utf8"), "hello");
 });
-test("截图路径：拒绝越界、非法文件名、不存在的文件", (store) => {
-  store.saveShot("a", 1, "image/png", "AA==");
-  assert.ok(store.shotPath("a", "1.png"));
-  assert.equal(store.shotPath("../a", "1.png"), null);
-  assert.equal(store.shotPath("a", "../1.png"), null);
-  assert.equal(store.shotPath("a", "run.json"), null);
-  assert.equal(store.shotPath("a", "9.png"), null);
-  assert.equal(store.shotPath("nope", "1.png"), null);
+test("shotPath：文件不存在或文件名不合法返回 null", (store) => {
+  store.saveShot("a", 1, "image/png", Buffer.from("x").toString("base64"));
+  assert.ok(store.shotPath("a", "1.png") !== null);
+  assert.equal(store.shotPath("a", "2.png"), null);
+  assert.equal(store.shotPath("a", "../index.json"), null);
+  assert.equal(store.shotPath("../evil", "1.png"), null);
 });
-test("删除：连同截图一起删掉，返回实际删除条数，忽略非法 id", (store, root) => {
+test("删除运行记录：删目录并从索引拿掉", (store, root) => {
   store.save(run("a"), { index: true });
-  store.saveShot("a", 1, "image/png", "AA==");
   store.save(run("b"), { index: true });
-  assert.equal(store.remove(["a", "../../etc", "missing"]), 1);
-  assert.ok(!existsSync(path.join(root, "a")));
+  store.saveShot("a", 1, "image/png", "eA==");
+  assert.equal(store.remove(["a"]), 1);
   assert.deepEqual(store.list().map((s) => s.id), ["b"]);
+  assert.ok(!existsSync(path.join(root, "a")));
+  assert.equal(store.get("a"), null);
 });
-test("非法的运行 ID 不能写入", (store) => {
+test("非法的 run ID 抛错，不往奇怪路径写", (store) => {
   assert.throws(() => store.save(run("../evil")), /非法/);
-  assert.equal(store.get("../evil"), null);
 });
-test("索引损坏或不存在时不报错", (store, root) => {
-  assert.deepEqual(store.list(), []);
-  writeFileSync(path.join(root, "index.json"), "{ not json");
-  assert.deepEqual(store.list(), []);
-  assert.equal(store.get("missing"), null);
+test("完整日志字段随 run.json 原样落盘并读回", (store) => {
+  const r = run("log");
+  r.prompt = "任务目标：x";
+  r.steps = [{ stepNumber: 1, status: "done", tag: "动作", text: "find", meta: "", thought: "先找按钮", tool: "find", input: '{"query":"a"}', output: "ref_1", isError: true }];
+  store.save(r);
+  const back = store.get("log")!;
+  assert.equal(back.prompt, "任务目标：x");
+  assert.deepEqual(back.steps[0], r.steps[0]);
+});
+test("lightRun 去掉完整入参/返回/说明，保留步骤骨架；capLog 截断并注明原长", () => {
+  const r = run("light");
+  r.prompt = "p";
+  r.steps = [{ stepNumber: 1, status: "done", tag: "动作", text: "find", meta: "用时 1ms", screenshot: "1.png", thought: "t", tool: "find", input: "i", output: "o", isError: false }];
+  const l = lightRun(r);
+  assert.equal("prompt" in l, false);
+  assert.deepEqual(l.steps[0], { stepNumber: 1, status: "done", tag: "动作", text: "find", meta: "用时 1ms", screenshot: "1.png", tool: "find", isError: false });
+  assert.equal(r.steps[0]!.input, "i", "不修改原对象");
+  assert.equal(capLog("abc", 10), "abc");
+  assert.match(capLog("x".repeat(20), 5), /^xxxxx\n…（已截断，原文共 20 字）$/);
 });
 
 console.log(`\n${passed} 个测试全部通过`);

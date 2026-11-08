@@ -2,13 +2,25 @@ import assert from "node:assert/strict";
 import { describeStep, shortUrl, visibleSteps } from "./renderer/step-format.ts";
 import type { RunStep } from "./shared.ts";
 
+/**
+ * 运行步骤日志人话转译与过滤单元测试套件。
+ */
+
 let passed = 0;
+/**
+ * 简易单元测试运行包装器。
+ * 【调用时机】执行每个独立用例时调用。
+ */
 const test = (name: string, fn: () => void) => {
   fn();
   passed++;
   console.log(`  ✓ ${name}`);
 };
 
+/**
+ * 构造模拟 RunStep 步骤对象。
+ * 【调用时机】测试用例准备输入步骤数据时调用。
+ */
 const makeStep = (text: string, status: RunStep["status"] = "done"): RunStep => ({
   stepNumber: 1,
   status,
@@ -119,4 +131,3 @@ test("shortUrl 处理", () => {
 });
 
 console.log(`\n${passed} 个测试全部通过`);
-

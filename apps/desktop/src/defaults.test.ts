@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
 import { pickDefaultKernel, pickDefaultProfile, type DefaultsInput } from "./defaults.ts";
 
+/**
+ * 默认 Profile 与默认内核推导单元测试套件。
+ */
+
 let passed = 0;
+/**
+ * 简易单元测试断言运行包装器。
+ * 【调用时机】执行每个独立用例时调用。
+ * 【作用】执行测试逻辑，递增通过计数并在控制台输出成功勾选日志。
+ */
 const test = (name: string, fn: () => void) => {
   fn();
   passed++;
@@ -16,6 +25,12 @@ const refs = [
   { id: "chromium::shop", kernelId: "chromium" },
   { id: "cloak::a", kernelId: "cloak" },
 ];
+
+/**
+ * 构造测试输入数据的辅助函数。
+ * 【调用时机】各测试用例准备输入上下文时调用。
+ * 【作用】以预设内核与 Profile 为底，覆盖个性化配置生成 DefaultsInput 对象。
+ */
 const input = (over: Partial<DefaultsInput> = {}): DefaultsInput => ({
   kernels: [chromium, cloak],
   refs,

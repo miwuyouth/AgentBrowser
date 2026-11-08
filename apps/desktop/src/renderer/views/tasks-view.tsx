@@ -4,6 +4,22 @@ import { getReadiness } from "../readiness.ts";
 import { PageHead } from "../page.tsx";
 import type { Navigate } from "../sidebar.tsx";
 
+/**
+ * 任务列表单项条目组件。
+ *
+ * 【调用时机】
+ * 在 `TasksView` 任务列表中遍历渲染各个任务时调用。
+ *
+ * 【作用】
+ * 1. 展示任务名称；
+ * 2. 点击整行条目跳转该任务的编辑页面（`go("editor", task.id)`）；
+ * 3. 右侧提供"运行"（若当前正在跑该任务则显示为"运行中"并支持直达 LiveView）按钮，处理并发互斥状态（`busy && !running` 时禁用）。
+ *
+ * @param task 任务实体对象
+ * @param busy 当前是否有任何任务在运行中
+ * @param running 当前正在执行的任务是否正是本任务
+ * @param go 路由导航函数
+ */
 function TaskRow({
   task,
   busy,
@@ -52,7 +68,20 @@ function TaskRow({
   );
 }
 
-/** 模型或浏览器还没准备好时，在任务页顶部提醒，并给出直达的入口 */
+/**
+ * 运行环境就绪检查提示条组件。
+ *
+ * 【调用时机】
+ * 在任务列表页面顶部渲染。
+ *
+ * 【作用】
+ * 评估模型服务商密钥与浏览器内核安装状态。
+ * 若尚未配置模型 API Key 或未下载安装浏览器内核，在列表顶部浮动展示指引横幅，并提供直达设置弹窗或环境管理页的一键修复按钮。
+ *
+ * @param state 当前全局应用状态
+ * @param go 路由导航函数
+ * @param onOpenSettings 唤起设置模态框回调
+ */
 function SetupHint({ state, go, onOpenSettings }: { state: AppState; go: Navigate; onOpenSettings: () => void }) {
   const r = getReadiness(state);
   if (r.model && r.kernel) return null;
@@ -75,6 +104,22 @@ function SetupHint({ state, go, onOpenSettings }: { state: AppState; go: Navigat
   );
 }
 
+/**
+ * 任务主列表视图组件。
+ *
+ * 【调用时机】
+ * 用户点击侧边栏"任务"标签页（`view === "tasks"`）时在主视区渲染。
+ *
+ * 【作用】
+ * 1. 按最近更新时间戳（updatedAt）倒序排列呈现所有持久化任务；
+ * 2. 在无任务时呈现引导创建第一个任务的空状态插画与按钮；
+ * 3. 顶部配合 `SetupHint` 提示未就绪的基础依赖；
+ * 4. 汇总任务数量并展示在页面标头。
+ *
+ * @param state 当前全局应用状态
+ * @param go 路由导航函数
+ * @param onOpenSettings 唤起设置弹窗回调
+ */
 export function TasksView({ state, go, onOpenSettings }: { state: AppState; go: Navigate; onOpenSettings: () => void }) {
   // 最近改动的排在最前
   const tasks = [...state.tasks].sort((a, b) => b.updatedAt - a.updatedAt);

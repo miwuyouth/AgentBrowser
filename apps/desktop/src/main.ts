@@ -13,10 +13,12 @@ import {
   startBrowserSession,
   type BrowserSession,
 } from "@agent-browser/bridge";
+import { listModels, testModel } from "./model-probe.ts";
 import {
   activeProviderConfig,
   applyUpdate,
   loadSettings,
+  probeTarget,
   saveSettings,
   view,
   type StoredSettings,
@@ -25,10 +27,12 @@ import {
   AUTO_PROFILE_LABEL,
   IPC,
   errorMessage,
+  lightRun,
   type AppState,
   type BrowserActionResult,
   type BrowserStatus,
   type ProfileItem,
+  type ModelProbeRequest,
   type SettingsUpdate,
   type TaskItem,
   type ThemeMode,
@@ -51,31 +55,61 @@ import {
 import { Scheduler } from "./scheduler.ts";
 import { TaskRunner } from "./task-runner.ts";
 
-// 截图以 shot://run/<运行ID>/<文件名> 的地址提供给界面，不再把 base64 塞进消息里。必须在 app ready 之前注册。
+// 截图以 shot://run/<运行ID>/<文件名> 的自定义协议提供给界面，彻底避免把体积巨大的 base64 塞进 IPC 消息中。
+// 必须在 app.whenReady() 之前注册特权方案。
 protocol.registerSchemesAsPrivileged([{ scheme: "shot", privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 
-/** 获取浏览器扩展的构建产物目录 */
+/**
+ * 获取配套 Chrome 浏览器扩展的构建产物目录。
+ *
+ * 【调用时机】
+ * 在 `startBrowser` 启动浏览器并装载扩展插件前调用。
+ *
+ * 【作用】
+ * 优先读取环境变量指定的路径；
+ * 若应用已打包，则定位到安装包内的 resources/extension 目录；
+ * 若处于开发环境，则直接解析 monorepo 中 packages/extension/dist 的构建产物路径。
+ *
+ * @returns 扩展产物目录的绝对路径
+ */
 function extensionDir(): string {
   if (process.env.AGENT_BROWSER_EXTENSION_DIR) return process.env.AGENT_BROWSER_EXTENSION_DIR;
   return app.isPackaged ? path.join(process.resourcesPath, "extension") : path.resolve(__dirname, "../../../packages/extension/dist");
 }
 
-/** 获取桌面端产品图标路径 */
+/**
+ * 获取桌面端产品应用图标文件路径。
+ *
+ * 【调用时机】
+ * 在 `createWindow` 创建 Electron 主窗口时调用。
+ *
+ * 【作用】
+ * 优先在当前构建目录寻找 icon.png，若不存在则回退至源码 assets/icon.png 路径。
+ *
+ * @returns 图标文件的绝对路径
+ */
 function appIconPath(): string {
   const distIcon = path.join(__dirname, "icon.png");
   if (existsSync(distIcon)) return distIcon;
   return path.resolve(__dirname, "../assets/icon.png");
 }
 
+/** Electron 主窗口引用 */
 let window: BrowserWindow | null = null;
+/** 本地持久化的全量模型设置 */
 let settings: StoredSettings;
+/** 当前打开的浏览器会话引用 */
 let browser: BrowserSession | null = null;
+/** 浏览器连接状态 */
 let browserStatus: BrowserStatus = "stopped";
+/** 浏览器启动或连接过程中的错误信息 */
 let browserError: string | undefined;
+/** 全局任务运行器实例 */
 let taskRunner: TaskRunner;
+/** 全局定时调度器实例 */
 let scheduler: Scheduler;
 
-/** 内核下载安装的运行时状态（不持久化） */
+/** 内核下载安装的实时运行时状态（仅保留在内存中，不持久化） */
 interface KernelRuntime {
   installing?: boolean;
   fraction?: number;
@@ -85,12 +119,33 @@ interface KernelRuntime {
 }
 const kernelRuntime = new Map<string, KernelRuntime>();
 
-/** 主进程向渲染窗口推送 UI 事件 */
+/**
+ * 主进程向渲染窗口单向推送 UI 事件。
+ *
+ * 【调用时机】
+ * 状态更新、任务执行步骤推进、内核下载进度更新或发送操作轻提示通知时调用。
+ *
+ * 【作用】
+ * 通过主窗口的 `webContents.send` 将特定事件广播至预加载脚本及前端监听器。
+ *
+ * @param e 待广播的 UI 事件对象
+ */
 function emit(e: UiEvent) {
   window?.webContents.send(IPC.event, e);
 }
 
-/** 组装发送给渲染进程的当前应用状态 */
+/**
+ * 组装发送给渲染进程的当前应用全量状态对象。
+ *
+ * 【调用时机】
+ * 1. 渲染进程通过 IPC `IPC.getState` 主动拉取初始数据时调用；
+ * 2. `pushState` 广播最新全量状态时内部调用。
+ *
+ * 【作用】
+ * 聚合任务列表、历史运行记录摘要、已安装内核（合并实时下载进度）、Profile 列表、当前激活的模型配置脱敏视图及运行中任务等，构成一体化状态快照。
+ *
+ * @returns 完整的 AppState 对象
+ */
 function state(): AppState {
   const tasks = loadTasks();
   const runs = getRunStore().list();
@@ -107,7 +162,8 @@ function state(): AppState {
     };
   });
   const profiles = loadProfiles();
-  const activeRun = taskRunner?.getActiveRun() || undefined;
+  const running = taskRunner?.getActiveRun();
+  const activeRun = running ? lightRun(running) : undefined;
 
   return {
     browser: browserStatus,
@@ -124,10 +180,32 @@ function state(): AppState {
   };
 }
 
-/** 推送全量状态更新到渲染进程 */
+/**
+ * 推送全量状态更新到渲染进程。
+ *
+ * 【调用时机】
+ * 任何触发数据变更的操作后（如任务创建/修改/删除、设置变更、排队队列变动、内核状态变动等）调用。
+ *
+ * 【作用】
+ * 调用 `state()` 生成全量快照，并发送 `type: "state"` 事件同步给前端界面。
+ */
 const pushState = () => emit({ type: "state", state: state() });
 
-/** 根据当前配置与指定浏览器会话创建 Agent 实例 */
+/**
+ * 根据当前配置与指定浏览器会话创建 Agent 实例。
+ *
+ * 【调用时机】
+ * 在 `TaskRunner.runTask` 启动准备阶段由工场函数回调触发。
+ *
+ * 【作用】
+ * 1. 检查并获取当前激活提供商的模型配置；
+ * 2. 挂载文件授权门控（`makeFilePermissionGate`）；
+ * 3. 构造并返回 `@agent-browser/agent` 的 `AgentSession` 实例。
+ *
+ * @param session 已建立连接的浏览器会话
+ * @param opts 运行选项，如步数上限
+ * @returns 实例化完成的 AgentSession
+ */
 function createAgentForSession(session: BrowserSession, opts: { maxSteps?: number }): AgentSession {
   const config = activeProviderConfig(settings);
   if (typeof config === "string") throw new Error(config);
@@ -142,7 +220,19 @@ function createAgentForSession(session: BrowserSession, opts: { maxSteps?: numbe
   });
 }
 
-/** 创建一次运行范围内的文件读取授权回调 */
+/**
+ * 创建单次任务执行范围内的文件读取授权校验回调函数。
+ *
+ * 【调用时机】
+ * 在 `createAgentForSession` 内部调用，为当前 AgentSession 单独生成授权闭包。
+ *
+ * 【作用】
+ * 类似 macOS TCC 权限控制，当 Agent 尝试通过工具读取本地文件上传至网页时触发弹窗拦截：
+ * - 用户可选择「允许一次」、「总是允许」（仅在此次运行内记住）或「拒绝」；
+ * - 拦截结果实时发送通知消息并向 Agent 返回授权布尔值，防止本地隐私敏感文件被无感知读取。
+ *
+ * @returns 接受文件绝对路径并异步返回是否允许读取的门控函数
+ */
 function makeFilePermissionGate(): (absolutePath: string) => Promise<boolean> {
   const alwaysAllowed = new Set<string>();
   return async (absolutePath: string) => {
@@ -170,7 +260,18 @@ function makeFilePermissionGate(): (absolutePath: string) => Promise<boolean> {
   };
 }
 
-/** 安全关闭当前运行的浏览器会话 */
+/**
+ * 安全关闭当前运行中的浏览器会话。
+ *
+ * 【调用时机】
+ * 1. 任务设置了 `autoClose: true` 并在任务结束后由 TaskRunner 调用；
+ * 2. 准备启动新内核/Profile，需先关闭之前旧内核实例时调用；
+ * 3. 卸载正在运行中的内核前调用；
+ * 4. 应用退出前（`before-quit`）调用。
+ *
+ * 【作用】
+ * 异步调用底层的 `browser.close()` 释放进程资源，将全局 `browserStatus` 重置为 "stopped" 并同步推送最新状态。
+ */
 async function closeCurrentBrowser(): Promise<void> {
   if (!browser) return;
   const current = browser;
@@ -182,7 +283,25 @@ async function closeCurrentBrowser(): Promise<void> {
   } catch {}
 }
 
-/** 启动指定内核与对应 Profile 的浏览器进程并等待扩展通过 WebSocket 连接 */
+/**
+ * 启动指定内核与对应 Profile 的浏览器进程，并等待自研扩展通过 WebSocket 连接。
+ *
+ * 【调用时机】
+ * 1. 任务运行器启动任务执行前调用；
+ * 2. 用户在前端环境管理界面点击"打开浏览器"进行人工操作/登录时调用；
+ * 3. 用户在前端点击"测试连接"时调用。
+ *
+ * 【作用】
+ * 1. 解析目标内核与 Profile，确认已下载安装；
+ * 2. 检查当前已启动的浏览器，若内核与数据目录完全相同则直接复用；若不同则先安全关闭旧实例；
+ * 3. 状态标记为 "starting"，调用 `startBrowserSession` 拉起浏览器进程并自动挂载配套扩展；
+ * 4. 监听 Bridge 的 connected、disconnected 及进程 onExit 事件，实时维护连接状态。
+ *
+ * @param targetKernel 目标内核标识或名称（可选）
+ * @param targetProfile 目标 Profile 标识或名称（可选）
+ * @param initialUrl 启动后默认导航的初始网址（可选）
+ * @returns 建立连接后的 BrowserSession 实例
+ */
 async function startBrowser(
   targetKernel?: string,
   targetProfile?: string,
@@ -266,7 +385,15 @@ async function startBrowser(
   }
 }
 
-/** 注册 IPC 交互通道 */
+/**
+ * 注册主进程与渲染进程之间的所有 IPC 交互通道。
+ *
+ * 【调用时机】
+ * 应用初始化就绪阶段（`app.whenReady()`）在创建主窗口前调用。
+ *
+ * 【作用】
+ * 为任务增删改查、运行控制、Profile 管理、内核下载/卸载/授权、主题控制等数十个业务通道绑定处理句柄。
+ */
 function registerIpc() {
   ipcMain.handle(IPC.getState, () => state());
 
@@ -277,6 +404,10 @@ function registerIpc() {
     pushState();
     return state();
   });
+
+  // 模型列表与连通性测试（使用表单当前值，不要求先保存）
+  ipcMain.handle(IPC.listModels, (_e, req: ModelProbeRequest) => listModels(probeTarget(settings, req)));
+  ipcMain.handle(IPC.testModel, (_e, req: ModelProbeRequest) => testModel(probeTarget(settings, req), (req.model ?? "").trim()));
 
   // 任务管理 IPC
   ipcMain.handle(IPC.saveTask, (_e, taskData: Partial<TaskItem>) => {
@@ -398,7 +529,7 @@ function registerIpc() {
     pushState();
   });
 
-  // 手动打开指定浏览器内核与对应的 Profile
+  // 释放被占用的 Profile 目录
   ipcMain.handle(IPC.releaseProfile, async (_e, pid: number) => {
     try {
       await terminateProfileBrowser(pid, getAppBrowserProfilesDir());
@@ -408,6 +539,7 @@ function registerIpc() {
     }
   });
 
+  // 手动打开指定浏览器内核与对应的 Profile
   ipcMain.handle(IPC.openBrowser, async (_e, kernelId: string, profileId?: string, url?: string): Promise<BrowserActionResult> => {
     try {
       const { kernel, profile } = resolveKernelAndProfile(kernelId, profileId);
@@ -552,7 +684,16 @@ function registerIpc() {
   });
 }
 
-/** 创建主应用窗口 */
+/**
+ * 创建应用主窗口。
+ *
+ * 【调用时机】
+ * 1. 在 `app.whenReady()` 启动完毕后调用；
+ * 2. 在 macOS 环境下用户关闭窗口后重新点击 Dock 应用图标（`activate` 事件）时调用。
+ *
+ * 【作用】
+ * 创建并配置 Electron 主窗口：设置尺寸、最小限制、macOS 毛玻璃侧边栏（vibrancy）、红绿灯位置、隔离沙箱与预加载脚本，并加载渲染页面。
+ */
 function createWindow() {
   const iconPath = appIconPath();
   const isMac = process.platform === "darwin";
@@ -584,10 +725,11 @@ function createWindow() {
   window.on("closed", () => (window = null));
 }
 
-// Electron 启动入口
+// Electron 启动主入口
 app.whenReady().then(() => {
   app.setName("Agent 任务台");
 
+  // 自定义截图协议处理句柄：shot://run/<runId>/<file>
   protocol.handle("shot", (request) => {
     const [, runId = "", file = ""] = new URL(request.url).pathname.split("/");
     const full = getRunStore().shotPath(runId, file);

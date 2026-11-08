@@ -7,7 +7,18 @@ import { shotUrl } from "../shots.ts";
 import { describeStep, shortUrl, visibleSteps } from "../step-format.ts";
 import { formatClock } from "../time.ts";
 
-/** 每秒刷新一次的当前时间。用时在界面里自己算，后端不用每秒推一次 */
+/**
+ * 前端秒级自增时钟 Hook。
+ *
+ * 【调用时机】
+ * 在 `LiveView` 组件挂载时调用。
+ *
+ * 【作用】
+ * 启动 1 秒间隔的本地循环定时器驱动当前时间戳自增，让界面的用时秒表平滑刷新，
+ * 避免由后端每秒推送 IPC 消息造成不必要的进程间通信开销。
+ *
+ * @returns 响应式当前毫秒时间戳
+ */
 function useNow(): number {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
@@ -17,6 +28,17 @@ function useNow(): number {
   return now;
 }
 
+/**
+ * 实时监控中的单步时间线节点组件。
+ *
+ * 【调用时机】
+ * 在 `LiveView` 左侧实时步骤流中遍历渲染当前已产生步骤时调用。
+ *
+ * 【作用】
+ * 调用 `describeStep` 转译人话动作描述，展示状态圆点/对勾标记与操作参数目标。
+ *
+ * @param step 原始步骤对象
+ */
 function LiveStep({ step }: { step: RunStep }) {
   const { label, target } = describeStep(step);
   return (
@@ -30,6 +52,22 @@ function LiveStep({ step }: { step: RunStep }) {
   );
 }
 
+/**
+ * 任务实时监控与推流视图组件。
+ *
+ * 【调用时机】
+ * 任务启动执行（点击"运行"、"保存并运行"）或用户在其他页面点击"运行中"状态标签跳转时（`view === "live"`）在主工作区渲染。
+ *
+ * 【作用】
+ * 1. 监控当前处于执行中（`status === "run"`）的活跃任务；
+ * 2. 头部展示任务名、实时耗时时钟（如 01:23）、已执行步数及"终止"中断按钮；
+ * 3. 左侧展示步骤时间线流，并在新步骤追加时自动平滑滚动至最底部；
+ * 4. 右侧以模拟浏览器容器展示当前页面 URL 与最新落盘的屏幕截图，支持点击调起灯箱大图预览；
+ * 5. 任务结束侦测：一旦后端执行完毕或中断（`run` 对象消失），自动无缝跳转至对应的运行详情页（`go("run", seenRunId)`）引导用户查看结果。
+ *
+ * @param state 当前全局应用状态
+ * @param go 路由导航函数
+ */
 export function LiveView({ state, go }: { state: AppState; go: Navigate }) {
   const run = state.activeRun?.status === "run" ? state.activeRun : undefined;
   const now = useNow();
@@ -90,6 +128,10 @@ export function LiveView({ state, go }: { state: AppState; go: Navigate }) {
   const latestFile = [...run.steps].reverse().find((s) => s.screenshot)?.screenshot;
   const latestShot = latestFile ? shotUrl(run.id, latestFile) : undefined;
 
+  /**
+   * 中止当前正在运行的任务。
+   * 【调用时机】用户点击右上角"终止"按钮时调用。
+   */
   const cancel = () => {
     setCancelling(true);
     void window.agentApi.cancelTask();

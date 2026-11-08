@@ -3,11 +3,19 @@ import { latestSlot, nextSlot, scheduleLabel } from "./schedule.ts";
 import { GRACE_MS, Scheduler } from "./scheduler.ts";
 import type { TaskItem } from "./shared.ts";
 
+/**
+ * 任务调度排程算法与定时调度器单元测试套件。
+ */
+
 // 2026-11-08 是周日。所有时间都按本地时区构造，和运行时一致。
 const at = (day: number, h: number, m = 0) => new Date(2026, 10, day, h, m).getTime();
 const rule = (repeatKind: TaskItem["repeatKind"], repeatTime = "08:30") => ({ mode: "cron" as const, repeatKind, repeatTime });
 
 let passed = 0;
+/**
+ * 简易测试断言包装器。
+ * 【调用时机】执行每个独立用例时调用。
+ */
 const test = (name: string, fn: () => void) => {
   fn();
   passed++;
@@ -43,7 +51,19 @@ test("规则描述", () => {
   assert.equal(scheduleLabel("hours", "08:30"), "每 6 小时（08:30 起）");
 });
 
-/** 搭一个带假时钟、假任务存储、假运行器的调度器 */
+/**
+ * 搭建测试沙箱：组装带自定义假时钟、内存任务存储、假运行器的 Scheduler 实例。
+ *
+ * 【调用时机】
+ * 在针对 Scheduler 的每个用例开始前调用。
+ *
+ * 【作用】
+ * 提供可完全由单测步进控制的虚拟时钟与运行状态，避免真实异步延迟。
+ *
+ * @param tasks 初始任务列表数据
+ * @param start 虚拟时钟起始时间戳
+ * @returns 包含调度器与测试控制句柄的环境对象
+ */
 function setup(tasks: Partial<TaskItem>[], start: number) {
   let clock = start;
   let busy = false;

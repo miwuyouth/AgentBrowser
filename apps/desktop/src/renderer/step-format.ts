@@ -1,6 +1,12 @@
 import type { RunStep } from "../shared.ts";
 
-/** 工具名 → 人话。未知工具原样显示 */
+/**
+ * 运行步骤日志人话转译模块。
+ * 负责将 Agent 底层生硬的工具名称（如 computer, navigate, javascript_tool）及参数剔除技术噪音，
+ * 转化为普通用户直观易懂的界面动作描述。
+ */
+
+/** 工具名称到人话动作的映射字典 */
 export const TOOL_LABEL: Record<string, string> = {
   navigate: "打开页面",
   computer: "页面操作",
@@ -15,24 +21,44 @@ export const TOOL_LABEL: Record<string, string> = {
   submit_result: "提交结果",
 };
 
-/** Agent 内部的标签页管理，对用户没有信息量，不在列表里显示 */
+/** Agent 内部的标签页管理工具，对最终用户无直接信息量，在步骤列表中默认隐藏 */
 const INTERNAL_TOOL = /^tabs_(context|create)/;
 
+/** 步骤的人话展示视图数据结构 */
 export interface StepView {
-  /** 动作名，如「打开页面」；非工具调用的步骤（如启动）为空 */
+  /** 动作分类名称，如「打开页面」、「点击元素」；非工具步骤（如启动）为空 */
   label: string;
-  /** 动作对象，如网址；已截短。无高价值信息时为空字符串 */
+  /** 动作操作目标对象，如简化网址、输入文本；已安全截断 */
   target: string;
+  /** 是否属于内部机器管理步骤（应在界面过滤隐藏） */
   internal: boolean;
 }
 
+/** 字符截断辅助函数 */
 const clip = (v: string, n: number) => (v.length > n ? `${v.slice(0, n - 1)}…` : v);
+
+/**
+ * 网址简化工具。
+ * 剥除开头的 http://、https://、www. 以及结尾的斜杠，便于小空间展示。
+ */
 export const shortUrl = (u: string) =>
   u
     .replace(/^https?:\/\/(www\.)?/, "")
     .replace(/\/$/, "");
 
-/** 从 JSON 文本或键值对字符串中提取指定 key 的值 */
+/**
+ * 从 JSON 文本或键值对字符串中提取指定 key 的值。
+ *
+ * 【调用时机】
+ * 在 `formatToolCall` 提取工具入参参数值时内部调用。
+ *
+ * 【作用】
+ * 支持解析标准 JSON 字符串，或通过正则表达式容错匹配 `key="value"`、`key='value'` 或 `key=value`。
+ *
+ * @param raw 参数原始字符串
+ * @param key 目标键名
+ * @returns 提取到的值字符串；未匹配则返回 null
+ */
 function parseField(raw: string, key: string): string | null {
   if (raw.startsWith("{")) {
     try {
@@ -40,7 +66,7 @@ function parseField(raw: string, key: string): string | null {
       const v = obj[key];
       return v != null ? String(v) : null;
     } catch {
-      // 容错降级
+      // 容错降级，继续走正则提取
     }
   }
   // 匹配 key="value" 或 key=value
@@ -48,7 +74,25 @@ function parseField(raw: string, key: string): string | null {
   return m ? (m[1] ?? m[2] ?? m[3] ?? null) : null;
 }
 
-/** 提炼工具步骤的人话表达，剔除代码、内部标识（ref_xx）等机器噪音 */
+/**
+ * 提炼工具步骤的人话表达，剔除代码、内部标识（ref_xx）等机器噪音。
+ *
+ * 【调用时机】
+ * 在 `describeStep` 匹配到已知工具调用时内部调用。
+ *
+ * 【作用】
+ * 针对各类工具定制人话转译逻辑：
+ * - navigate: 提取 url 并简化显示；
+ * - javascript_tool: 隐藏具体代码，按 fetch/scroll 等关键字提炼为"提取数据"或"滚动页面"；
+ * - computer: 识别 action 参数细分为"点击元素"、"输入文本"、"按键操作"、"滚动页面"等；
+ * - find: 提取 query 搜索词；
+ * - form_input: 提取 value 输入值；
+ * - browser_batch: 将子动作串联为 "打开页面 → 点击元素" 等直观流程。
+ *
+ * @param tool 底层工具名
+ * @param raw 工具参数原始文本
+ * @returns 人性化标签与操作目标对象
+ */
 function formatToolCall(tool: string, raw: string): { label: string; target: string } {
   if (tool === "navigate") {
     let url = "";
@@ -166,7 +210,22 @@ function formatToolCall(tool: string, raw: string): { label: string; target: str
   };
 }
 
-/** 把步骤文字转成给人看的样子 */
+/**
+ * 将原始的单步运行日志（RunStep）转译为面向人类的可视化模型。
+ *
+ * 【调用时机】
+ * 1. 实时视图（LiveView）在任务执行中渲染每一步的操作条目时调用；
+ * 2. 运行详情页（RunDetailView）渲染完整的执行历史步骤列表时调用；
+ * 3. `visibleSteps` 判定是否为内部工具时调用。
+ *
+ * 【作用】
+ * 正则提取工具名称与入参，若为已知工具调用 `formatToolCall` 进行业务转译；
+ * 若为用户补充指令等非工具操作，提取出指令摘要；
+ * 返回包含人话标签、目标参数以及是否为内部不可见步骤的 StepView 对象。
+ *
+ * @param step 原始的 RunStep 步骤对象
+ * @returns 转换后的 StepView 视图对象
+ */
 export function describeStep(step: RunStep): StepView {
   const m = /^(?:调用\s+)?([A-Za-z0-9_.-]+)(?:[：:]\s*|\s{2})?([\s\S]*)$/.exec(step.text);
   const tool = m?.[1] ?? "";
@@ -192,12 +251,28 @@ export function describeStep(step: RunStep): StepView {
     };
   }
 
+  // 无法识别工具名的纯描述文字（如「启动浏览器…」）整句作为目标，避免标签与目标重复
+  if (!tool) {
+    return { label: "", target: clip(step.text.trim(), 60), internal: false };
+  }
+
   return {
-    label: tool || step.text,
+    label: tool,
     target: clip(rest, 40),
     internal: false,
   };
 }
 
-/** 列表里只显示对用户有意义的步骤 */
+/**
+ * 过滤出仅对最终用户有明确信息量的可视步骤。
+ *
+ * 【调用时机】
+ * 在 LiveView 实时时间轴和 RunDetailView 步骤列表渲染前调用。
+ *
+ * 【作用】
+ * 剔除内部 `internal: true` 的标签页管理步骤，保持界面清爽聚焦。
+ *
+ * @param steps 完整的 RunStep 步骤数组
+ * @returns 过滤后的有效步骤数组
+ */
 export const visibleSteps = (steps: RunStep[]) => steps.filter((s) => !describeStep(s).internal);

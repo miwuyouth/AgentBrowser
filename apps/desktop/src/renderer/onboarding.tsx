@@ -5,8 +5,18 @@ import { errorMessage } from "../shared.ts";
 import { Icon } from "./icons.tsx";
 import { getReadiness } from "./readiness.ts";
 
+/** 单个引导步骤的执行状态 */
 type StepStatus = "done" | "active" | "todo" | "error";
 
+/**
+ * 引导向导单步组件。
+ *
+ * 【调用时机】
+ * 在 `Onboarding` 根向导组件内按序渲染各个准备阶段时调用。
+ *
+ * 【作用】
+ * 渲染左侧状态徽标（已完成展示对勾、出错展示叹号、未完成展示序号）以及右侧标题、说明与交互插槽。
+ */
 function Step({
   n,
   status,
@@ -32,7 +42,16 @@ function Step({
   );
 }
 
-/** 第 1 步：填写模型服务。默认只要一个 API Key；用 OpenAI 兼容接口的人才需要多填两项 */
+/**
+ * 新手引导第 1 步：配置大模型提供商及 API Key。
+ *
+ * 【调用时机】
+ * 在 Onboarding 向导的第一步且当前系统尚未配置可用模型凭据时渲染。
+ *
+ * 【作用】
+ * 收集用户的模型提供商选择（Anthropic 或 OpenAI 兼容接口），输入 BaseURL、模型名称及 API Key，
+ * 点击保存后通过 IPC `window.agentApi.saveSettings` 写入系统钥匙串加密保存。
+ */
 function ModelForm({ state }: { state: AppState }) {
   const [kind, setKind] = useState<ProviderKind>(state.provider.kind);
   const [apiKey, setApiKey] = useState("");
@@ -120,6 +139,22 @@ function ModelForm({ state }: { state: AppState }) {
   );
 }
 
+/**
+ * 首次使用新手引导向导全屏覆盖组件。
+ *
+ * 【调用时机】
+ * 在 `app.tsx` 挂载时，根据 localStorage 标记与 `getReadiness` 检查，若用户未曾完成过引导且环境尚未就绪时渲染。
+ *
+ * 【作用】
+ * 以三步流程引导用户快速就绪：
+ * 1. 配置模型：填写 API Key；
+ * 2. 准备浏览器内核：自动触发调用 `installKernel` 下载默认 Chromium 内核，展示进度条与重试按钮；
+ * 3. 准备 Profile：内核就绪后自动调用 `createProfile` 创建初始主 Profile；
+ * 4. 底部提供"跳过"与"开始使用"按钮，完成引导并持久化记录状态。
+ *
+ * @param state 当前全局应用状态
+ * @param onDone 完成引导或点击跳过时的回调
+ */
 export function Onboarding({ state, onDone }: { state: AppState; onDone: () => void }) {
   const r = getReadiness(state);
   const installStarted = useRef(false);

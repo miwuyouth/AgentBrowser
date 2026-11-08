@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
 import { DEFAULT_ADVICE, RunStopped, describeStop, describeTimeout } from "./run-stop.ts";
 
+/**
+ * 运行终止状态与排查建议转译单元测试套件。
+ */
+
 let passed = 0;
+/**
+ * 简易单元测试断言运行包装器。
+ * 【调用时机】执行每个独立用例时调用。
+ * 【作用】执行测试逻辑，递增通过计数并在控制台输出成功勾选日志。
+ */
 const test = (name: string, fn: () => void) => {
   fn();
   passed++;

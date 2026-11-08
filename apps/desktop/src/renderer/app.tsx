@@ -14,8 +14,22 @@ import { RunDetailView } from "./views/run-detail-view.tsx";
 import { RunsView } from "./views/runs-view.tsx";
 import { TasksView } from "./views/tasks-view.tsx";
 
+/** 记录用户是否已完成过首次引导的 localStorage 键名 */
 const ONBOARDED_KEY = "agent_browser_onboarded";
 
+/**
+ * 桌面端应用主视图控制器组件。
+ *
+ * 【调用时机】
+ * 由根组件 `App` 挂载渲染。
+ *
+ * 【作用】
+ * 1. 订阅全局状态 Hook（`useAppState`）；
+ * 2. 维护前端路由导航状态（`route: { view, id }`）并分发路由跳转闭包 `go`；
+ * 3. 首次加载时根据 `getReadiness` 与本地存储状态决定是否展示新手引导向导（`Onboarding`）；
+ * 4. 监听全局快捷键（⌘N / Ctrl+N），支持任意页面快速直达新建任务页面；
+ * 5. 组装左侧 `Sidebar` 导航与右侧主视区视图切换（TasksView / EditorView / RunsView / RunDetailView / LiveView / EnvView），并管理设置弹窗开闭。
+ */
 function Main() {
   const state = useAppState();
   const [route, setRoute] = useState<{ view: View; id?: string }>({ view: "tasks" });
@@ -81,7 +95,15 @@ function Main() {
   );
 }
 
-/** 轻提示在引导页和主界面里都要能显示，所以放在最外层 */
+/**
+ * 桌面端渲染层根容器组件。
+ *
+ * 【调用时机】
+ * 页面加载完成由底部 `render(<App />, ...)` 统一挂载至 DOM 节点 `#app`。
+ *
+ * 【作用】
+ * 容纳主交互界面 `Main` 以及全局轻提示悬浮容器 `ToastHost`，确保通知在全屏引导或主界面均可正确浮动展现。
+ */
 function App() {
   return (
     <>
@@ -91,5 +113,7 @@ function App() {
   );
 }
 
+// 页面首屏立即同步初始化主题外观
 initTheme();
+// 渲染挂载至 DOM
 render(<App />, document.getElementById("app")!);
