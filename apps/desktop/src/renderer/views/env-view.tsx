@@ -64,10 +64,11 @@ async function attempt(action: () => Promise<unknown>) {
  *    - "删除"：物理删除自定义 Profile（内置不可删除 Profile 不提供此按钮）。
  *
  * @param profile 目标 Profile 实体
+ * @param index 在所属内核下的序号，从 1 开始
  * @param kernel 所属浏览器内核实体
  * @param busy 当前是否有任务正在运行中
  */
-function ProfileRow({ profile: p, kernel, busy }: { profile: ProfileItem; kernel: KernelItem; busy: boolean }) {
+function ProfileRow({ profile: p, index, kernel, busy }: { profile: ProfileItem; index: number; kernel: KernelItem; busy: boolean }) {
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState(p.name);
   /** 这一轮重命名是否已经结束：回车、Esc 之后输入框卸载还会触发一次失焦，不能再处理第二遍 */
@@ -136,6 +137,7 @@ function ProfileRow({ profile: p, kernel, busy }: { profile: ProfileItem; kernel
 
   return (
     <li class="row row-static">
+      <span class="row-index">{index}</span>
       <div class="row-main">
         {renaming ? (
           <input
@@ -336,8 +338,8 @@ function KernelCard({ kernel: k, profiles, busy, onNew }: { kernel: KernelItem; 
 
       {profiles.length > 0 && (
         <ul class="env-profiles">
-          {profiles.map((p) => (
-            <ProfileRow key={p.id} profile={p} kernel={k} busy={busy} />
+          {profiles.map((p, i) => (
+            <ProfileRow key={p.id} profile={p} index={i + 1} kernel={k} busy={busy} />
           ))}
         </ul>
       )}

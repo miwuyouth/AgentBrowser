@@ -590,6 +590,7 @@ svg.icon {
 
 .env-profiles { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--line); }
 .env-profiles .row-static { min-height: 52px; padding-top: 8px; padding-bottom: 8px; }
+.row-index { flex: none; min-width: 16px; color: var(--text-3); font-variant-numeric: tabular-nums; }
 .env-add { padding: 0 14px; border-top: 1px solid var(--line); }
 .add-btn { display: inline-flex; align-items: center; gap: 6px; height: 40px; padding: 0 6px; border: 0; background: none; color: var(--text-2); }
 .add-btn:hover { color: var(--text); }
