@@ -1,33 +1,34 @@
 import type { ThemeMode } from "../shared.ts";
 
-const THEME_STORAGE_KEY = "agent_browser_theme";
+const KEY = "agent_browser_theme";
+const media = window.matchMedia("(prefers-color-scheme: dark)");
 
-export function getStoredTheme(): ThemeMode {
-  const t = localStorage.getItem(THEME_STORAGE_KEY);
-  if (t === "light" || t === "dark" || t === "system") return t;
-  return "system";
+export function getTheme(): ThemeMode {
+  const saved = localStorage.getItem(KEY);
+  return saved === "light" || saved === "dark" ? saved : "system";
 }
 
-export function applyTheme(theme: ThemeMode) {
-  localStorage.setItem(THEME_STORAGE_KEY, theme);
-  const isDark =
-    theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-
-  document.documentElement.setAttribute("data-theme", isDark ? "dark" : "light");
-  document.documentElement.style.colorScheme = isDark ? "dark" : "light";
-
-  if (window.agentApi?.setTheme) {
-    void window.agentApi.setTheme(theme).catch(() => {});
-  }
+/** 把主题写到 <html data-theme>；"system" 时跟随系统 */
+function paint(mode: ThemeMode) {
+  const dark = mode === "dark" || (mode === "system" && media.matches);
+  document.documentElement.dataset.theme = dark ? "dark" : "light";
 }
 
+export function applyTheme(mode: ThemeMode) {
+  localStorage.setItem(KEY, mode);
+  paint(mode);
+  void window.agentApi.setTheme(mode);
+}
+
+/** 启动时调用：系统外观变化时，"跟随系统"模式要同步更新 */
 export function initTheme() {
-  const current = getStoredTheme();
-  applyTheme(current);
-
-  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
-    if (getStoredTheme() === "system") {
-      applyTheme("system");
-    }
+  paint(getTheme());
+  media.addEventListener("change", () => {
+    if (getTheme() === "system") paint("system");
   });
+}
+
+/** 浅色 → 深色 → 跟随系统 → 浅色 */
+export function nextTheme(mode: ThemeMode): ThemeMode {
+  return mode === "light" ? "dark" : mode === "dark" ? "system" : "light";
 }

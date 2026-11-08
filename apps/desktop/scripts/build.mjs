@@ -16,7 +16,8 @@ const node = {
   sourcemap: "linked",
   logLevel: "info",
   // ws optionally loads native addons; Electron is provided at runtime.
-  external: ["electron", "bufferutil", "utf-8-validate"],
+  // cloakbrowser (ESM) and playwright-core (dynamic requires) are loaded from node_modules at runtime.
+  external: ["electron", "bufferutil", "utf-8-validate", "cloakbrowser", "playwright-core"],
 };
 await Promise.all([
   build({ ...node, entryPoints: [path.join(root, "src/main.ts")], outfile: path.join(dist, "main.cjs") }),
@@ -28,7 +29,9 @@ await Promise.all([
     target: "chrome130",
     sourcemap: "linked",
     logLevel: "info",
-    entryPoints: [path.join(root, "src/renderer/app.ts")],
+    jsx: "automatic",
+    jsxImportSource: "preact",
+    entryPoints: [path.join(root, "src/renderer/app.tsx")],
     outfile: path.join(dist, "renderer/app.js"),
   }),
 ]);
@@ -37,12 +40,10 @@ for (const f of ["index.html", "styles.css", "logo.svg"]) {
   if (existsSync(srcFile)) cpSync(srcFile, path.join(dist, "renderer", f));
 }
 
-// 复制应用图标资产到 dist 目录
+// 主进程运行时只用到 icon.png（窗口 / Dock 图标）
 const assetsDir = path.join(root, "assets");
-for (const iconFile of ["icon.png", "icon.icns", "icon.svg"]) {
-  const srcIcon = path.join(assetsDir, iconFile);
-  if (existsSync(srcIcon)) cpSync(srcIcon, path.join(dist, iconFile));
-}
+const pngIcon = path.join(assetsDir, "icon.png");
+if (existsSync(pngIcon)) cpSync(pngIcon, path.join(dist, "icon.png"));
 
 // 同步更新本地 Electron.app 的默认图标包，确保 macOS Dock 在开发模式下也展示产品图标
 const electronResources = path.join(root, "node_modules/electron/dist/Electron.app/Contents/Resources");
