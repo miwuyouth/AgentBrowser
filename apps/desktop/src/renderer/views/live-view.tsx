@@ -63,7 +63,8 @@ function LiveStep({ step }: { step: RunStep }) {
  * 2. 头部展示任务名、实时耗时时钟（如 01:23）、已执行步数及"终止"中断按钮；
  * 3. 左侧展示步骤时间线流，新步骤追加时若用户停在底部则自动跟随到最底部，往上翻看时不打扰；
  * 4. 右侧以模拟浏览器容器展示当前页面 URL 与最新落盘的屏幕截图，支持点击调起灯箱大图预览；
- * 5. 任务结束侦测：一旦后端执行完毕或中断（`run` 对象消失），自动无缝跳转至对应的运行详情页（`go("run", seenRunId)`）引导用户查看结果。
+ * 5. 任务结束侦测：一旦后端执行完毕或中断（`run` 对象消失且运行器空闲），自动跳转至对应的运行详情页（`go("run", seenRunId)`）；
+ *    多 Profile 的一轮会依次换成下一个 Profile 的运行，整轮结束后跳到这一轮的页面（`go("batch", seenBatchId)`）。
  *
  * @param state 当前全局应用状态
  * @param go 路由导航函数
@@ -74,16 +75,24 @@ export function LiveView({ state, go }: { state: AppState; go: Navigate }) {
 
   /** 看到过的那次运行；它结束时，自动带用户去看结果 */
   const seenRunId = useRef<string | null>(null);
-  if (run) seenRunId.current = run.id;
+  /** 看到过的那一轮；整轮结束时带用户去看这一轮的结果 */
+  const seenBatchId = useRef<string | null>(null);
+  if (run) {
+    seenRunId.current = run.id;
+    seenBatchId.current = run.batch?.id ?? null;
+  }
 
   const [gaveUp, setGaveUp] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [shot, setShot] = useState<string | null>(null);
   const listRef = useRef<HTMLOListElement>(null);
 
+  // 一轮里两个 Profile 之间运行器仍在忙，不算结束
   useEffect(() => {
-    if (!run && seenRunId.current) go("run", seenRunId.current);
-  }, [run?.id]);
+    if (run || state.running || !seenRunId.current) return;
+    if (seenBatchId.current) go("batch", seenBatchId.current);
+    else go("run", seenRunId.current);
+  }, [run?.id, state.running]);
 
   // 点了运行却一直没有开始（例如启动失败，原因会以提示条显示）：别让用户一直干等
   useEffect(() => {
@@ -155,10 +164,10 @@ export function LiveView({ state, go }: { state: AppState; go: Navigate }) {
         <h1>{run.name}</h1>
         <span class="live-status">
           <i class="dot run" />
-          运行中 · {elapsed} · {steps.length} 步
+          运行中{run.batch && <> · {run.profileName} {run.batch.index}/{run.batch.total}</>} · {elapsed} · {steps.length} 步
         </span>
         <button type="button" class="btn btn-quiet-danger" disabled={cancelling} onClick={cancel}>
-          {cancelling ? "正在终止…" : "终止"}
+          {cancelling ? "正在终止…" : run.batch ? "终止这一轮" : "终止"}
         </button>
       </header>
 

@@ -4,7 +4,7 @@ import { Icon, type IconName } from "./icons.tsx";
 import { applyTheme, getTheme, nextTheme } from "./theme.ts";
 
 /** 应用支持的所有顶级或二级工作区视图标识 */
-export type View = "tasks" | "editor" | "runs" | "run" | "live" | "env";
+export type View = "tasks" | "editor" | "runs" | "run" | "batch" | "live" | "env";
 
 /**
  * 界面路由跳转导航函数。
@@ -17,6 +17,7 @@ export type View = "tasks" | "editor" | "runs" | "run" | "live" | "env";
  * - editor: 传递任务 ID 表示编辑该任务，未传则表示新建任务；
  * - runs: 传递任务 ID 表示仅过滤查看该任务的专属历史记录；
  * - run: 传递运行 ID 表示进入单次运行详情页；
+ * - batch: 传递一轮的 ID 表示进入这一轮的页面（多 Profile 任务每个 Profile 各一条记录）；
  * - live: 切换到实时监控正在运行的任务。
  *
  * @param view 目标视图名称
@@ -28,7 +29,7 @@ export type Navigate = (view: View, id?: string) => void;
  * 视图所有者映射表。
  * 编辑页属于「任务」，运行详情和实时视图属于「运行记录」：确保二级页面中左侧侧边栏高亮始终指向正确的大模块。
  */
-const NAV_OWNER: Record<View, View> = { tasks: "tasks", editor: "tasks", runs: "runs", run: "runs", live: "runs", env: "env" };
+const NAV_OWNER: Record<View, View> = { tasks: "tasks", editor: "tasks", runs: "runs", run: "runs", batch: "runs", live: "runs", env: "env" };
 
 const THEME_ICON: Record<ThemeMode, IconName> = { light: "sun", dark: "moon", system: "monitor" };
 const THEME_LABEL: Record<ThemeMode, string> = { light: "浅色", dark: "深色", system: "跟随系统" };

@@ -14,22 +14,37 @@ import type { Navigate } from "../sidebar.tsx";
  * 渲染任务列表每一行时调用。
  *
  * 【作用】
- * 按 Profile ID 查当前名称（改过名也能跟上）；找不到时和编辑页、运行时一致，退回该内核的默认 Profile。
- * 装了不止一个内核时前面加上内核名，因为每个内核都有一个同名的「主 Profile」。
+ * 按 Profile ID 查当前名称（改过名也能跟上）；一个都找不到时和编辑页、运行时一致，退回该内核的默认 Profile。
+ * 选了多个时只写第一个和总数。装了不止一个内核时前面加上内核名，因为每个内核都有一个同名的「主 Profile」。
  *
  * @param task 任务实体对象
  * @param state 当前全局应用状态
- * @returns 例如「主 Profile」或「Chromium · 工作号」
+ * @returns 例如「主 Profile」「工作号 等 3 个 Profile」或「Chromium · 工作号」
  */
 function profileText(task: TaskItem, state: AppState): string {
   const own = state.profiles.filter((p) => p.kernelId === task.kernelId);
+  const picked = own.filter((p) => task.profileIds.includes(p.id));
   const name = task.autoProfile
     ? "每次新建 Profile"
-    : (own.find((p) => p.id === task.profileId) ?? own.find((p) => p.isDefault) ?? own[0])?.name ?? "运行时自动创建 Profile";
+    : picked.length > 1
+      ? `${picked[0]!.name} 等 ${picked.length} 个 Profile`
+      : (picked[0] ?? own.find((p) => p.isDefault) ?? own[0])?.name ?? "运行时自动创建 Profile";
   const kernelsInUse = new Set(state.profiles.map((p) => p.kernelId)).size;
   if (kernelsInUse <= 1) return name;
   const kernel = state.kernels.find((k) => k.id === task.kernelId)?.name ?? task.kernel;
   return kernel ? `${kernel} · ${name}` : name;
+}
+
+/**
+ * 任务正在运行时按钮上的文字。
+ * 一轮跑多个 Profile 时带上进度（第几个 / 共几个）。
+ *
+ * @returns 「运行中」「运行中 2/3」，本任务没在运行时为 null
+ */
+function runningText(task: TaskItem, state: AppState): string | null {
+  const run = state.activeRun;
+  if (!state.running || run?.taskId !== task.id) return null;
+  return run.batch ? `运行中 ${run.batch.index}/${run.batch.total}` : "运行中";
 }
 
 /**
@@ -46,7 +61,7 @@ function profileText(task: TaskItem, state: AppState): string {
  * @param task 任务实体对象
  * @param profile 该任务所用 Profile 的展示文字
  * @param busy 当前是否有任何任务在运行中
- * @param running 当前正在执行的任务是否正是本任务
+ * @param running 本任务正在运行时的状态文字（「运行中」或一轮里的「运行中 2/3」）；没在运行为 null
  * @param go 路由导航函数
  */
 function TaskRow({
@@ -61,7 +76,7 @@ function TaskRow({
   task: TaskItem;
   profile: string;
   busy: boolean;
-  running: boolean;
+  running: string | null;
   cloning: boolean;
   onClone: (task: TaskItem) => void;
   go: Navigate;
@@ -109,7 +124,7 @@ function TaskRow({
 
         <button
           type="button"
-          class="btn btn-sm"
+          class="btn btn-sm btn-run"
           disabled={busy && !running}
           title={busy && !running ? "已有任务正在运行" : running ? "查看实时运行" : undefined}
           onClick={(e) => {
@@ -123,7 +138,7 @@ function TaskRow({
           }}
         >
           <Icon name="play" size={12} />
-          {running ? "运行中" : "运行"}
+          {running ?? "运行"}
         </button>
       </div>
 
@@ -230,7 +245,7 @@ export function TasksView({ state, go, onOpenSettings }: { state: AppState; go: 
             task={t}
             profile={profileText(t, state)}
             busy={state.running}
-            running={state.activeRun?.taskId === t.id}
+            running={runningText(t, state)}
             cloning={cloningId === t.id}
             onClone={handleClone}
             go={go}

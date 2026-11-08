@@ -11,12 +11,14 @@ import { SettingsModal, type SettingsTab } from "./views/settings-modal.tsx";
 import { EnvView } from "./views/env-view.tsx";
 import { EditorView } from "./views/editor-view.tsx";
 import { LiveView } from "./views/live-view.tsx";
+import { BatchView } from "./views/batch-view.tsx";
 import { RunDetailView } from "./views/run-detail-view.tsx";
 import { RunsView } from "./views/runs-view.tsx";
 import { TasksView } from "./views/tasks-view.tsx";
 
 /** 记录用户是否已完成过首次引导的 localStorage 键名 */
 const ONBOARDED_KEY = "agent_browser_onboarded";
+
 
 /**
  * 桌面端应用主视图控制器组件。
@@ -29,7 +31,7 @@ const ONBOARDED_KEY = "agent_browser_onboarded";
  * 2. 维护前端路由导航状态（`route: { view, id }`）并分发路由跳转闭包 `go`；
  * 3. 首次加载时根据 `getReadiness` 与本地存储状态决定是否展示新手引导向导（`Onboarding`）；
  * 4. 监听全局快捷键（⌘N 新建任务、⌘, 打开设置），并响应系统通知点击跳到运行详情；
- * 5. 组装左侧 `Sidebar` 导航与右侧主视区视图切换（TasksView / EditorView / RunsView / RunDetailView / LiveView / EnvView），并管理设置弹窗开闭。
+ * 5. 组装左侧 `Sidebar` 导航与右侧主视区视图切换（TasksView / EditorView / RunsView / RunDetailView / BatchView / LiveView / EnvView），并管理设置弹窗开闭。
  */
 function Main() {
   const state = useAppState();
@@ -64,13 +66,14 @@ function Main() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // 用户点了「任务完成」系统通知：跳到那次运行的详情
+  // 用户点了「任务完成」系统通知：跳到那次运行的详情；多 Profile 的一轮跳到这一轮的页面
   useEffect(
     () =>
       window.agentApi.onEvent((e) => {
         if (e.type !== "open_run") return;
         setSettingsTab(null);
-        go("run", e.runId);
+        if (e.batchId) go("batch", e.batchId);
+        else go("run", e.runId);
       }),
     [],
   );
@@ -113,6 +116,7 @@ function Main() {
         {view === "editor" && <EditorView key={id ?? "new"} state={state} taskId={id} go={go} />}
         {view === "runs" && <RunsView state={state} taskId={id} go={go} />}
         {view === "run" && <RunDetailView key={id} state={state} runId={id} go={go} />}
+        {view === "batch" && <BatchView key={id} state={state} batchId={id} go={go} />}
         {view === "live" && <LiveView state={state} go={go} />}
         {view === "env" && <EnvView state={state} />}
       </main>

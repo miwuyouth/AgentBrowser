@@ -45,11 +45,13 @@ export interface TaskItem {
   kernelId: string;
   /** 所选浏览器内核显示名称 */
   kernel: string;
-  /** 所选 Profile ID（与 kernelId 对应） */
-  profileId: string;
-  /** 所选 Profile 显示名称 */
-  profile: string;
-  /** 为 true 时表示每次执行任务都自动新建一个全新 Profile，此时 profileId 留空 */
+  /**
+   * 要运行的 Profile ID 列表（都属于 kernelId 这个内核），按「运行环境」里的顺序排列。
+   * 选了多个时，每次运行会按顺序在每个 Profile 上各跑一遍，这一组叫「一轮」。
+   * 为空表示用该内核的默认 Profile（该内核一个 Profile 都没有时，运行时自动创建）。
+   */
+  profileIds: string[];
+  /** 为 true 时表示每次执行任务都自动新建一个全新 Profile，此时 profileIds 为空 */
   autoProfile?: boolean;
   /** 任务执行完毕后是否自动关闭浏览器实例（headless 时始终关闭） */
   autoClose: boolean;
@@ -149,6 +151,22 @@ export interface RunSummary {
   endTime?: number;
   /** 触发源描述（如 "手动触发"、"定时触发"、"失败重试"） */
   trigger: string;
+  /** 这次运行用的 Profile */
+  profileId?: string;
+  /** 这次运行用的 Profile 名称（运行开始时的名称） */
+  profileName?: string;
+  /** 属于哪一轮：任务选了多个 Profile 时才有；只跑一个 Profile 的运行没有这一项 */
+  batch?: RunBatch;
+}
+
+/** 一轮运行里的位置信息：同一轮的每条运行记录 id 相同 */
+export interface RunBatch {
+  /** 这一轮的唯一 ID */
+  id: string;
+  /** 这是这一轮里的第几个 Profile（从 1 开始） */
+  index: number;
+  /** 这一轮计划运行的 Profile 总数 */
+  total: number;
 }
 
 /** 单次运行的完整明细记录：在详情页和重试操作时按需加载 */
@@ -293,6 +311,8 @@ export interface AppState {
   profiles: ProfileItem[];
   /** 当前正在执行的完整运行明细（含实时步骤） */
   activeRun?: RunRecord;
+  /** 正在进行的那一轮的 ID（多 Profile 任务才有；两个 Profile 之间也在） */
+  activeBatchId?: string;
 }
 
 /** 保存设置时的更新载荷（仅模型配置） */
@@ -336,8 +356,8 @@ export type UiEvent =
   | { type: "run_update"; run: RunRecord }
   | { type: "kernel_progress"; kernelId: string; fraction?: number; message?: string }
   | { type: "notice"; message: string; isError?: boolean }
-  /** 用户点了系统通知：界面跳到对应的运行详情 */
-  | { type: "open_run"; runId: string }
+  /** 用户点了系统通知：界面跳到对应的运行详情；多 Profile 的一轮跳到这一轮的页面 */
+  | { type: "open_run"; runId: string; batchId?: string }
   /** 主进程要用户确认（退出前提醒、文件授权等）：界面弹出应用内确认框，选完后通过 answerPrompt 回复 */
   | { type: "prompt"; id: number; prompt: AppPrompt };
 
@@ -396,8 +416,10 @@ export interface AgentApi {
   deleteTask(id: string): Promise<void>;
   /** 立即触发运行指定任务 */
   runTask(id: string): Promise<void>;
-  /** 从失败的运行记录重试该任务 */
+  /** 从失败的运行记录重试：只在这条记录用的那个 Profile 上重跑 */
   retryRun(runId: string): Promise<void>;
+  /** 重跑某一轮里失败的那些 Profile */
+  retryBatch(batchId: string): Promise<void>;
   /** 批量删除运行历史记录 */
   deleteRuns(ids: string[]): Promise<number>;
   /** 按需读取单次运行的完整明细记录（含步骤与截图） */
@@ -440,9 +462,6 @@ export interface AgentApi {
 
 /** 任务选择"每次执行自动新建 Profile"时展示的名称常量 */
 export const AUTO_PROFILE_LABEL = "自动创建新 Profile";
-
-/** 下拉框中"自动创建新 Profile"选项的特殊 value 标识 */
-export const AUTO_PROFILE_VALUE = "__auto__";
 
 /**
  * 将任意抛出的错误对象或未知值统一转化为人类可读的字符串信息。
@@ -537,6 +556,7 @@ export function cloneTaskItem(source: TaskItem, existingNames: string[]): TaskIt
     id: `task-${now}-${rand}`,
     name,
     fields,
+    profileIds: [...(source.profileIds ?? [])],
     lastStatus: "none",
     lastRunTime: "—",
     lastDuration: "—",
@@ -557,6 +577,7 @@ export const IPC = {
   deleteTask: "tasks:delete",
   runTask: "tasks:run",
   retryRun: "runs:retry",
+  retryBatch: "runs:retry-batch",
   deleteRuns: "runs:delete",
   getRun: "runs:get",
   cancelTask: "agent:cancel-task",

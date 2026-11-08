@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "preact/hooks";
-import { AUTO_PROFILE_LABEL, AUTO_PROFILE_VALUE, errorMessage, makeCloneName, type AppState, type FormField } from "../../shared.ts";
+import { AUTO_PROFILE_LABEL, errorMessage, makeCloneName, type AppState, type FormField } from "../../shared.ts";
 import { Icon } from "../icons.tsx";
 import { PageHead } from "../page.tsx";
 import { toast } from "../toast.tsx";
@@ -27,7 +27,7 @@ const toLimit = (v: string, max: number) => (/^\d+$/.test(v.trim()) && Number(v)
  * 统一样式的表单下拉选择控件。
  *
  * 【调用时机】
- * 在任务内核选择、Profile 选择、表单字段类型选择时渲染。
+ * 在任务内核选择、表单字段类型选择时渲染。
  *
  * 【作用】
  * 包装标准 HTML `<select>`，附加右侧自定义箭头图标与统一样式。
@@ -54,7 +54,7 @@ function Select({ id, value, onChange, children }: { id: string; value: string; 
  * 1. 录入任务名称（必填）、核心目标 Prompt（支持高度自动撑开）与可选起始网址；
  * 2. 调度执行排程（支持手动或每天/工作日/每周一/每6小时的重复周期与时间）；
  * 3. 结构化表单设计器（支持定义让 Agent 在完成目标后提取填写的字段名、字段类型与说明）；
- * 4. 高级参数折叠面板（内核与 Profile 选择、自动创建新 Profile 开关、完成判定条件、最大步数、超时时间、自动关闭浏览器选项等）；
+ * 4. 高级参数折叠面板（内核选择、Profile 多选（选多个时每次运行在每个 Profile 上各跑一遍）或「每次新建」、完成判定条件、最大步数、超时时间、自动关闭浏览器选项等）；
  * 5. 底部固定条：实时计算并预览调度规则或内核 Profile 摘要，支持「仅保存」、「保存并运行」或「保存并启用」。
  *
  * @param state 当前全局应用状态
@@ -73,8 +73,10 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
   const [url, setUrl] = useState(task?.url ?? "");
   const [name, setName] = useState(task?.name ?? "");
   const [kernelId, setKernelId] = useState(task?.kernelId || defaultKernel?.id || "");
-  /** "" 表示「用该内核的默认 Profile」，不把具体选择提前写死 */
-  const [profileChoice, setProfileChoice] = useState(task ? (task.autoProfile ? AUTO_PROFILE_VALUE : task.profileId) : "");
+  /** 勾选的 Profile；空数组表示「用该内核的默认 Profile」，不把具体选择提前写死 */
+  const [pickedProfiles, setPickedProfiles] = useState<string[]>(task && !task.autoProfile ? task.profileIds : []);
+  /** 每次运行都新建一个 Profile（与勾选 Profile 互斥） */
+  const [autoProfileOn, setAutoProfileOn] = useState(!!task?.autoProfile);
   const [doneCondition, setDoneCondition] = useState(task?.doneCondition ?? "");
   /** 数字输入框用字符串存，方便用户清空重填；保存时再转成整数 */
   const [maxSteps, setMaxSteps] = useState(String(task?.maxSteps ?? DEFAULT_MAX_STEPS));
@@ -141,11 +143,31 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
 
   const kernel = kernels.find((k) => k.id === kernelId);
   const profiles = state.profiles.filter((p) => p.kernelId === kernelId);
-  const choiceValid = profileChoice === AUTO_PROFILE_VALUE || profiles.some((p) => p.id === profileChoice);
-  // 没选、或选的 Profile 已不存在：用默认 Profile；该内核没有任何 Profile 时，运行时自动创建
-  const profileValue =
-    profileChoice && choiceValid ? profileChoice : (profiles.find((p) => p.isDefault)?.id ?? profiles[0]?.id ?? AUTO_PROFILE_VALUE);
-  const profileLabel = profileValue === AUTO_PROFILE_VALUE ? AUTO_PROFILE_LABEL : (profiles.find((p) => p.id === profileValue)?.name ?? "");
+  // 该内核没有任何 Profile 时，只能每次新建
+  const autoProfile = autoProfileOn || profiles.length === 0;
+  // 按「运行环境」里的顺序（也是运行顺序）；没选、或选的都已不存在：用默认 Profile
+  const stillThere = profiles.filter((p) => pickedProfiles.includes(p.id));
+  const fallback = profiles.find((p) => p.isDefault) ?? profiles[0];
+  const selected = autoProfile ? [] : stillThere.length > 0 ? stillThere : fallback ? [fallback] : [];
+  const profileIds = selected.map((p) => p.id);
+  const profileLabel = autoProfile
+    ? AUTO_PROFILE_LABEL
+    : selected.length === 1
+      ? selected[0]!.name
+      : `${selected.length} 个 Profile 依次运行`;
+
+  /**
+   * 勾选 / 取消勾选一个 Profile。
+   * 【调用时机】用户点高级设置里的 Profile 选项时调用。
+   * 至少保留一个：取消最后一个时不生效；从「每次新建」切过来时只选中点的这个。
+   */
+  const toggleProfile = (id: string) => {
+    const current = autoProfile ? [] : profileIds;
+    const next = current.includes(id) ? current.filter((x) => x !== id) : [...current, id];
+    if (next.length === 0) return;
+    setAutoProfileOn(false);
+    setPickedProfiles(next);
+  };
   const browserLabel = headless ? "后台运行，不显示浏览器" : `完成后${autoClose ? "自动关闭" : "保留"}浏览器`;
 
   const scheduled = repeat !== "manual";
@@ -186,7 +208,6 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
     setSaving(true);
     setError("");
     try {
-      const autoProfile = profileValue === AUTO_PROFILE_VALUE;
       const saved = await window.agentApi.saveTask({
         ...(task ? { id: task.id } : {}),
         name: name.trim(),
@@ -200,7 +221,7 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
         timeoutMinutes: timeoutValue!,
         kernelId,
         autoProfile,
-        ...(autoProfile ? {} : { profileId: profileValue }),
+        profileIds,
         autoClose: closeAfter,
         headless,
         ...(scheduled
@@ -235,7 +256,6 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
     setSaving(true);
     setError("");
     try {
-      const autoProfile = profileValue === AUTO_PROFILE_VALUE;
       const cloneName = makeCloneName(name.trim() || task.name, state.tasks.map((t) => t.name));
       const saved = await window.agentApi.saveTask({
         name: cloneName,
@@ -254,7 +274,7 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
         timeoutMinutes: timeoutValue!,
         kernelId,
         autoProfile,
-        ...(autoProfile ? {} : { profileId: profileValue }),
+        profileIds,
         autoClose: closeAfter,
         headless,
         ...(scheduled
@@ -439,7 +459,8 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
                   value={kernelId}
                   onChange={(v) => {
                     setKernelId(v);
-                    setProfileChoice("");
+                    setPickedProfiles([]);
+                    setAutoProfileOn(false);
                   }}
                 >
                   {kernels.map((k) => (
@@ -449,16 +470,34 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
                   ))}
                 </Select>
               </div>
-              <div class="field">
-                <label for="task-profile">Profile</label>
-                <Select id="task-profile" value={profileValue} onChange={setProfileChoice}>
-                  {profiles.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                  <option value={AUTO_PROFILE_VALUE}>{AUTO_PROFILE_LABEL}</option>
-                </Select>
+              <div class="field full">
+                <label id="task-profile-label">Profile</label>
+                <div class="chips" role="group" aria-labelledby="task-profile-label">
+                  {profiles.map((p) => {
+                    const on = profileIds.includes(p.id);
+                    return (
+                      <button key={p.id} type="button" class={`chip ${on ? "on" : ""}`} aria-pressed={on} onClick={() => toggleProfile(p.id)}>
+                        {p.name}
+                      </button>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    class={`chip ${autoProfile ? "on" : ""}`}
+                    aria-pressed={autoProfile}
+                    disabled={profiles.length === 0}
+                    onClick={() => setAutoProfileOn(true)}
+                  >
+                    每次新建
+                  </button>
+                </div>
+                <p class="hint-text">
+                  {autoProfile
+                    ? "每次运行都用一个全新的 Profile，不带任何登录状态。"
+                    : selected.length > 1
+                      ? `每次运行会按顺序在这 ${selected.length} 个 Profile 上各跑一遍；某个失败了会接着跑下一个。`
+                      : "可以多选：每次运行会按顺序在每个选中的 Profile 上各跑一遍。"}
+                </p>
               </div>
               <div class="field full">
                 <label for="task-done">完成条件（可选）</label>

@@ -1,10 +1,22 @@
 import type { AgentSession, SubmitCheck } from "@agent-browser/agent";
 import type { BrowserSession } from "@agent-browser/bridge";
 import { randomBytes } from "node:crypto";
-import { formatProfileStamp, getRunStore, loadTasks, resolveOrCreateProfile, saveTasks } from "./storage.ts";
+import { getRunStore, loadProfiles, loadTasks, prepareRunProfiles, saveTasks } from "./storage.ts";
 import { DEFAULT_ADVICE, describeStop, describeTimeout, RunStopped } from "./run-stop.ts";
 import { describeSubmitData, reviewSubmission, submitTemplate, tryExtractJsonFallback, type SubmitReview } from "./form-extract.ts";
-import { capLog, errorMessage, lightRun, type AppState, type FormField, type RunRecord, type RunStep, type TaskItem, type UiEvent } from "./shared.ts";
+import {
+  capLog,
+  errorMessage,
+  lightRun,
+  type AppState,
+  type KernelItem,
+  type ProfileItem,
+  type RunBatch,
+  type RunRecord,
+  type RunStep,
+  type TaskItem,
+  type UiEvent,
+} from "./shared.ts";
 
 
 /** 创建 AgentSession 时随任务传入的运行选项 */
@@ -35,6 +47,22 @@ function formatElapsed(ms: number): string {
 }
 
 /**
+ * 一轮结束时界面轻提示的文字。
+ *
+ * @param name 任务名称
+ * @param runs 这一轮实际跑完的运行记录
+ * @param total 这一轮计划运行的 Profile 数
+ */
+function finishedMessage(name: string, runs: RunRecord[], total: number): string {
+  if (total <= 1) return `任务「${name}」执行完成（${runs[0]?.status === "ok" ? "成功" : "失败"}）`;
+  const ok = runs.filter((r) => r.status === "ok").length;
+  const fail = runs.length - ok;
+  const skipped = total - runs.length;
+  const parts = [`成功 ${ok} 个`, fail > 0 ? `失败 ${fail} 个` : "", skipped > 0 ? `${skipped} 个未运行` : ""].filter(Boolean);
+  return `任务「${name}」这一轮已结束：${parts.join("，")}`;
+}
+
+/**
  * 任务执行调度与运行时生命周期管理器。
  * 负责调度 Agent 与浏览器环境交互、管理步骤执行、记录日志与截图落盘、处理超时与中止信号。
  */
@@ -49,10 +77,14 @@ export class TaskRunner {
   private deadline: ReturnType<typeof setTimeout> | null = null;
   /** 是否因超时而触发中止（用于区分用户主动取消与超时中断） */
   private timedOut = false;
-  /** 本次运行是否是用户自己点「停止」（或退出应用）中断的；这种情况不发完成通知 */
-  private cancelledByUser = false;
   /** 当前运行启动的毫秒时间戳 */
   private startTime = 0;
+  /** 是否有一轮正在进行：从第一个 Profile 开始到最后一个结束，两次运行之间也算 */
+  private batchActive = false;
+  /** 当前这一轮的 ID；只跑一个 Profile 时没有 */
+  private batchId: string | undefined;
+  /** 用户点了「停止」（或退出应用）：停掉整轮，后面的 Profile 不再运行；这种情况不发完成通知 */
+  private stopRequested = false;
 
   /**
    * 构造任务运行器。
@@ -136,10 +168,10 @@ export class TaskRunner {
   onIdle?: () => void;
 
   /**
-   * 一次运行收尾（结果已落盘）时的回调。
+   * 一轮运行全部收尾（结果已落盘）时的回调；只跑一个 Profile 时 runs 只有一条。
    * 主进程据此发「任务完成」系统通知；byUser 为 true 表示用户自己停止的，不需要通知。
    */
-  onFinished?: (run: RunRecord, byUser: boolean) => void;
+  onFinished?: (runs: RunRecord[], byUser: boolean) => void;
 
   /**
    * 获取当前正在执行的任务明细对象。
@@ -166,71 +198,162 @@ export class TaskRunner {
    * @returns 若正在执行任务返回 true，否则返回 false
    */
   isRunning(): boolean {
-    return this.activeRun !== null;
+    return this.batchActive;
+  }
+
+  /** 当前正在进行的那一轮的 ID；没有在跑、或只跑一个 Profile 时为 undefined */
+  getActiveBatchId(): string | undefined {
+    return this.batchId;
   }
 
   /**
-   * 发起执行指定 ID 的任务。
+   * 发起执行指定 ID 的任务：在任务勾选的每个 Profile 上依次各跑一次（一轮）。
    *
    * 【调用时机】
    * 1. 用户在前端任务列表点击"运行"按钮或任务编辑页点击"保存并运行"时调用（由 IPC `IPC.runTask` 触发）；
-   * 2. 用户在运行历史列表点击"从失败处重试"时调用（由 IPC `IPC.retryRun` 触发）；
+   * 2. 用户重试失败的运行时调用，只在那些 Profile 上重跑（由 IPC `IPC.retryRun` / `IPC.retryBatch` 触发）；
    * 3. 调度器轮询发现有任务到期且当前空闲，或队列出队时自动触发（triggerKind: "定时触发"）。
    *
    * 【作用】
-   * 完整控制单次任务的执行流程：
-   * 1. 并发互斥拦截（已有任务在跑时抛错）；
-   * 2. 检查或自动创建 Profile（自动模式或首次执行）；
-   * 3. 登记任务状态为 "run"，初始化运行记录与第一步"启动环境"日志；
-   * 4. 注册超时定时器（超过 timeoutMinutes 自动中止）；
-   * 5. 启动或复用目标内核与 Profile 的浏览器会话；
-   * 6. 检查模型密钥配置，实例化底层 AgentSession；
-   * 7. 运行主推理交互循环（`executeRealAgent`）；
-   * 8. 成功收尾（`finishTask`）或失败拦截（`failTask`）；
-   * 9. 在 finally 中清理计时器、重置状态、按配置自动关闭浏览器，并调用 `onIdle` 唤醒调度器消耗后续排队任务。
+   * 1. 并发互斥拦截（已有一轮在跑时抛错）；
+   * 2. 解析这一轮要用的 Profile（必要时自动新建），登记任务状态为 "run"；
+   * 3. 按顺序对每个 Profile 调用 `runOne`：某个失败了继续跑下一个；用户停止则整轮停下；
+   * 4. 整轮结束后汇总任务状态，按配置关闭浏览器，发完成通知，并调用 `onIdle` 唤醒调度器消耗后续排队任务。
+   *
+   * 整轮期间 `isRunning()` 一直为 true，排队的任务要等整轮结束才会开始。
    *
    * @param taskId 目标任务的 ID
    * @param triggerKind 触发来源说明（如 "手动触发"、"定时触发"、"失败重试"）
+   * @param onlyProfileIds 只在这些 Profile 上运行（重试用）；不传则用任务勾选的全部 Profile
    */
-  async runTask(taskId: string, triggerKind = "手动触发"): Promise<void> {
-    if (this.activeRun) {
+  async runTask(taskId: string, triggerKind = "手动触发", onlyProfileIds?: string[]): Promise<void> {
+    if (this.batchActive) {
       throw new Error("已有任务正在执行中，请先等待或停止当前任务。");
     }
-
-    const tasks = loadTasks();
-    const taskIndex = tasks.findIndex((t) => t.id === taskId);
-    if (taskIndex === -1) throw new Error(`未找到任务 ID: ${taskId}`);
-
-    const task = tasks[taskIndex];
+    const task = loadTasks().find((t) => t.id === taskId);
     if (!task) throw new Error(`未找到任务 ID: ${taskId}`);
 
-    // 自动模式：每次执行都新建 Profile；否则用所选 Profile，该内核下一个都没有时也会自动创建
-    const autoProfile = !!task.autoProfile;
-    const { kernel, profile, created } = await resolveOrCreateProfile(
-      task.kernelId || task.kernel,
-      autoProfile ? undefined : task.profileId || task.profile,
-      formatProfileStamp(),
-      autoProfile,
-    );
+    // 在第一个 await 之前占住运行器，防止解析 Profile 期间又启动另一个任务
+    this.batchActive = true;
+    this.stopRequested = false;
+    let plan: Awaited<ReturnType<typeof prepareRunProfiles>>;
+    try {
+      plan = await prepareRunProfiles(task, onlyProfileIds);
+    } catch (err) {
+      this.batchActive = false;
+      throw err;
+    }
+    const { kernel, profiles, created } = plan;
     if (created) this.emitEvent({ type: "state", state: this.getAppState() });
 
-    task.kernelId = kernel.id;
-    task.kernel = kernel.name;
-    // 自动模式下任务本身不绑定具体 Profile，下次执行仍会新建
-    if (!autoProfile) {
-      task.profileId = profile.id;
-      task.profile = profile.name;
-    }
-    task.lastStatus = "run";
-    task.lastRunTime = "刚刚开始";
-    task.lastDuration = "进行中";
-    saveTasks(tasks);
+    const batchId = profiles.length > 1 ? `batch-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}` : undefined;
+    this.batchId = batchId;
+    const before = this.markTaskStarted(task.id, kernel, created && !task.autoProfile ? profiles[0]!.id : undefined);
 
+    const batchStart = Date.now();
+    const finished: RunRecord[] = [];
+    try {
+      for (const [i, profile] of profiles.entries()) {
+        if (this.stopRequested) break;
+        const batch = batchId ? { id: batchId, index: i + 1, total: profiles.length } : undefined;
+        finished.push(await this.runOne(task, kernel, profile, triggerKind, batch));
+      }
+    } finally {
+      this.markTaskFinished(task.id, finished, Date.now() - batchStart, before);
+      // 后台运行没有窗口可以手动关，结束后一律关闭，避免留下看不见的浏览器进程
+      if (task.autoClose || task.headless) {
+        await this.closeBrowser().catch(() => {});
+      }
+      // 浏览器关完才放开运行器，免得关闭时误关了紧接着启动的下一个任务的浏览器
+      this.batchActive = false;
+      this.batchId = undefined;
+      if (finished.length > 0) {
+        this.emitEvent({ type: "notice", message: finishedMessage(task.name, finished, profiles.length) });
+        this.onFinished?.(finished, this.stopRequested);
+      }
+      this.emitEvent({ type: "state", state: this.getAppState() });
+      // 通知调度器：可以让排队的下一个任务上了
+      this.onIdle?.();
+    }
+  }
+
+  /**
+   * 一轮开始时把任务登记为「运行中」。
+   *
+   * @param taskId 任务 ID
+   * @param kernel 这一轮用的内核
+   * @param pinProfileId 这个内核原本没有 Profile、刚为任务新建了一个时传入：记到任务上，下次还用它
+   * @returns 登记前的状态；整轮一个都没跑（刚开始就被停止）时用来还原
+   */
+  private markTaskStarted(taskId: string, kernel: KernelItem, pinProfileId?: string) {
+    const tasks = loadTasks();
+    const t = tasks.find((item) => item.id === taskId);
+    if (!t) return undefined;
+    const before = { lastStatus: t.lastStatus, lastRunTime: t.lastRunTime, lastDuration: t.lastDuration };
+    t.kernelId = kernel.id;
+    t.kernel = kernel.name;
+    if (pinProfileId) t.profileIds = [pinProfileId];
+    t.lastStatus = "run";
+    t.lastRunTime = "刚刚开始";
+    t.lastDuration = "进行中";
+    saveTasks(tasks);
+    return before;
+  }
+
+  /**
+   * 一轮结束时汇总任务的最近状态：跑过的 Profile 全部成功才算成功。
+   * 用户停止时正在跑的那个会记为失败，所以被停止的一轮也算失败。
+   *
+   * @param taskId 任务 ID
+   * @param runs 这一轮实际跑完的运行记录
+   * @param elapsedMs 整轮用时
+   * @param before 开始前的状态；一个都没跑时还原它
+   */
+  private markTaskFinished(
+    taskId: string,
+    runs: RunRecord[],
+    elapsedMs: number,
+    before: Pick<TaskItem, "lastStatus" | "lastRunTime" | "lastDuration"> | undefined,
+  ) {
+    const tasks = loadTasks();
+    const t = tasks.find((item) => item.id === taskId);
+    if (!t) return;
+    if (runs.length === 0 && before) {
+      Object.assign(t, before);
+    } else {
+      // 与运行记录里这一轮的整体状态一致（见 batch.ts 的 summarizeBatch）：有失败才算失败
+      t.lastStatus = runs.every((r) => r.status === "ok") ? "ok" : "fail";
+      t.lastRunTime = "刚刚";
+      t.lastDuration = `用时 ${formatElapsed(elapsedMs)}`;
+    }
+    saveTasks(tasks);
+  }
+
+  /**
+   * 在一个 Profile 上运行一次任务。
+   *
+   * 【调用时机】`runTask` 按顺序对这一轮的每个 Profile 调用。
+   *
+   * 【作用】
+   * 1. 初始化运行记录与第一步"启动环境"日志，注册超时定时器（每个 Profile 单独计时）；
+   * 2. 确认 Profile 仍然存在（一轮进行中可能被删），启动或复用对应的浏览器会话；
+   * 3. 实例化 AgentSession，运行主推理交互循环（`executeRealAgent`）；
+   * 4. 成功收尾（`finishTask`）或失败拦截（`failTask`），清理计时器与运行状态。
+   * 浏览器不在这里关：换下一个 Profile 时 `getOrStartBrowser` 会先关掉旧的，整轮结束再按设置关闭。
+   *
+   * @returns 收尾后的完整运行记录
+   */
+  private async runOne(
+    task: TaskItem,
+    kernel: KernelItem,
+    profile: ProfileItem,
+    triggerKind: string,
+    batch: RunBatch | undefined,
+  ): Promise<RunRecord> {
     const runId = `run-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`;
     this.startTime = Date.now();
     this.currentAbortController = new AbortController();
     this.timedOut = false;
-    this.cancelledByUser = false;
     const limitMs = (task.timeoutMinutes ?? 0) * 60_000;
     if (limitMs > 0) {
       this.deadline = setTimeout(() => {
@@ -247,40 +370,47 @@ export class TaskRunner {
       meta: "进行中",
     };
 
-    this.activeRun = {
+    const run: RunRecord = {
       id: runId,
       taskId: task.id,
       name: task.name,
       status: "run",
       startTime: this.startTime,
       trigger: triggerKind,
+      profileId: profile.id,
+      profileName: profile.name,
+      ...(batch ? { batch } : {}),
       summary: "",
       steps: [initialStep],
     };
+    this.activeRun = run;
 
     this.persistRun(true);
-    this.emitEvent({ type: "run_update", run: lightRun(this.activeRun) });
+    this.emitEvent({ type: "run_update", run: lightRun(run) });
     this.emitEvent({ type: "state", state: this.getAppState() });
 
     try {
-      // 1. 拉起或连接任务指定的浏览器内核及对应 Profile
-      const initialUrl = task.url;
-      const browserSession = await this.getOrStartBrowser(kernel.id, profile.id, initialUrl, !!task.headless);
+      // 1. 一轮进行中 Profile 可能被删了：不能悄悄换成默认 Profile 去跑（那是另一个账号）
+      if (!loadProfiles().some((p) => p.id === profile.id)) {
+        throw new RunStopped(`Profile「${profile.name}」已被删除`, "到任务的高级设置里重新勾选要运行的 Profile。");
+      }
 
-      // 2. 检查模型配置并实例化 Agent
+      // 2. 拉起或连接任务指定的浏览器内核及对应 Profile
+      const browserSession = await this.getOrStartBrowser(kernel.id, profile.id, task.url, !!task.headless);
+
+      // 3. 检查模型配置并实例化 Agent
       const agentSession = this.createAgent(browserSession, {
         ...(task.maxSteps ? { maxSteps: task.maxSteps } : {}),
         ...this.submitOptions(task),
       });
       this.currentAgent = agentSession;
 
-      // 3. 运行真实 Agent 循环
+      // 4. 运行真实 Agent 循环
       await this.executeRealAgent(task, agentSession);
 
-      this.finishTask(task, "ok");
+      this.finishTask("ok");
     } catch (err) {
       // 优先级：超时 > 用户终止 > Agent 给出的停止原因 > 其他异常
-      this.cancelledByUser = !this.timedOut && !!this.currentAbortController?.signal.aborted;
       const stop = this.timedOut
         ? describeTimeout(task.timeoutMinutes)
         : this.currentAbortController?.signal.aborted
@@ -288,21 +418,15 @@ export class TaskRunner {
           : err instanceof RunStopped
             ? err
             : new RunStopped(errorMessage(err), DEFAULT_ADVICE);
-      this.failTask(task, stop.message, stop.advice);
+      this.failTask(stop.message, stop.advice);
     } finally {
       if (this.deadline) clearTimeout(this.deadline);
       this.deadline = null;
       this.activeRun = null;
       this.currentAgent = null;
       this.currentAbortController = null;
-      // 后台运行没有窗口可以手动关，结束后一律关闭，避免留下看不见的浏览器进程
-      if (task.autoClose || task.headless) {
-        await this.closeBrowser().catch(() => {});
-      }
-      this.emitEvent({ type: "state", state: this.getAppState() });
-      // 通知调度器：可以让排队的下一个任务上了
-      this.onIdle?.();
     }
+    return run;
   }
 
   /**
@@ -313,9 +437,11 @@ export class TaskRunner {
    * 2. 应用关闭前退出清理时调用。
    *
    * 【作用】
+   * 停掉整轮：当前 Profile 的运行立即中断（记为失败），后面的 Profile 不再运行。
    * 触发当前执行过程持有的 AbortController 中止信号，使进行中的网络请求与 Agent 交互立即中断退出。
    */
   cancel() {
+    if (this.batchActive) this.stopRequested = true;
     if (this.currentAbortController) {
       this.currentAbortController.abort();
     }
@@ -484,57 +610,35 @@ export class TaskRunner {
   }
 
   /**
-   * 正常完成任务后的状态收尾处理。
+   * 一次运行（一个 Profile）收尾：记录结束时间与最终状态并落盘。
    *
    * 【调用时机】
-   * 1. 任务顺利执行完成时在 `runTask` 中调用；
+   * 1. 这个 Profile 顺利执行完成时在 `runOne` 中调用；
    * 2. 在 `failTask` 中完成错误记录赋值后调用以统一落盘。
+   * 任务的最近状态、完成提示与通知在整轮结束时由 `runTask` 统一处理。
    *
-   * 【作用】
-   * 1. 记录运行结束时间戳和耗时描述；
-   * 2. 更新任务表实体中的 `lastStatus`、`lastRunTime`、`lastDuration`；
-   * 3. 将运行记录与任务列表持久化落盘；
-   * 4. 向前端广播执行完成的通知弹窗。
-   *
-   * @param task 执行的目标任务对象
    * @param status 最终状态（"ok" 或 "fail"）
    */
-  private finishTask(task: TaskItem, status: "ok" | "fail") {
+  private finishTask(status: "ok" | "fail") {
     if (!this.activeRun) return;
-
     this.activeRun.status = status;
     this.activeRun.endTime = Date.now();
-    const durationStr = formatElapsed(this.activeRun.endTime - this.startTime);
-
     this.persistRun(true);
-
-    const tasks = loadTasks();
-    const t = tasks.find((item) => item.id === task.id);
-    if (t) {
-      t.lastStatus = status;
-      t.lastRunTime = "刚刚";
-      t.lastDuration = `用时 ${durationStr}`;
-      saveTasks(tasks);
-    }
-
-    this.emitEvent({ type: "notice", message: `任务「${task.name}」执行完成（${status === "ok" ? "成功" : "失败"}）` });
-    this.onFinished?.(this.activeRun, this.cancelledByUser);
   }
 
   /**
-   * 任务异常失败时的错误记录组装与收尾。
+   * 一次运行异常失败时的错误记录组装与收尾。
    *
    * 【调用时机】
-   * 在 `runTask` 的 catch 错误处理块中调用。
+   * 在 `runOne` 的 catch 错误处理块中调用。
    *
    * 【作用】
-   * 在当前的 `activeRun` 上附加详细报错原因 `error` 与解决方案建议 `advice`，修改状态为 "fail"，并委托 `finishTask` 完成最终持久化与通知。
+   * 在当前的 `activeRun` 上附加详细报错原因 `error` 与解决方案建议 `advice`，修改状态为 "fail"，并委托 `finishTask` 完成最终持久化。
    *
-   * @param task 执行的目标任务对象
    * @param errorMsg 错误说明信息
    * @param advice 针对用户的排查建议
    */
-  private failTask(task: TaskItem, errorMsg: string, advice: string) {
+  private failTask(errorMsg: string, advice: string) {
     if (!this.activeRun) return;
 
     this.activeRun.status = "fail";
@@ -543,7 +647,7 @@ export class TaskRunner {
     this.activeRun.advice = advice;
     this.activeRun.summary = `任务执行失败：${errorMsg}`;
 
-    this.finishTask(task, "fail");
+    this.finishTask("fail");
   }
 
   /**

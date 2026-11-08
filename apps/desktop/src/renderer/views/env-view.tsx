@@ -136,7 +136,7 @@ function ProfileRow({ profile: p, index, kernel, busy }: { profile: ProfileItem;
    */
   const remove = async () => {
     const detail = ["它保存的网站登录状态会一并删除，无法恢复。"];
-    if (p.taskCount > 0) detail.push(`有 ${p.taskCount} 个任务指定了它，删除后会改用其他 Profile。`);
+    if (p.taskCount > 0) detail.push(`有 ${p.taskCount} 个任务选了它，删除后这些任务不再在它上面运行（只选了它的任务会改用默认 Profile）。`);
     const ok = await confirmDialog({ title: `删除 Profile「${p.name}」？`, detail, confirmLabel: "删除", danger: true });
     if (ok) void attempt(() => window.agentApi.deleteProfile(p.id));
   };

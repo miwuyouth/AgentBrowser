@@ -33,7 +33,7 @@ const EXT: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "
  * 在 `RunStore.save` 且指定 `opts.index: true`（任务开始、结束或中断时）调用。
  *
  * 【作用】
- * 剔除详细步骤列表（steps）、截图引用、以及大段总结文字，仅提取展示历史列表所需的 ID、名称、状态、时间戳及触发方式。
+ * 剔除详细步骤列表（steps）、截图引用、以及大段总结文字，仅提取展示历史列表所需的 ID、名称、状态、时间戳、触发方式、所用 Profile 与所属的一轮。
  *
  * @param r 完整的运行明细记录
  * @returns 精简后的运行摘要对象
@@ -47,6 +47,9 @@ export function summarize(r: RunRecord): RunSummary {
     startTime: r.startTime,
     ...(r.endTime !== undefined ? { endTime: r.endTime } : {}),
     trigger: r.trigger,
+    ...(r.profileId ? { profileId: r.profileId } : {}),
+    ...(r.profileName ? { profileName: r.profileName } : {}),
+    ...(r.batch ? { batch: r.batch } : {}),
   };
 }
 

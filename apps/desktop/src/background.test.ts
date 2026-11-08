@@ -73,14 +73,24 @@ test("长任务名会被截断", () => {
 });
 
 test("完成通知：成功取结果第一句，去掉 Markdown 标记", () => {
-  const n = finishNotice({ name: "每日签到", status: "ok", summary: "\n## 签到成功\n获得 10 积分", error: undefined });
+  const n = finishNotice([{ name: "每日签到", status: "ok", summary: "\n## 签到成功\n获得 10 积分", error: undefined }]);
   assert.deepEqual(n, { title: "每日签到 · 已完成", body: "签到成功" });
-  assert.equal(finishNotice({ name: "a", status: "ok", summary: "" }).body, "任务已完成");
+  assert.equal(finishNotice([{ name: "a", status: "ok", summary: "" }]).body, "任务已完成");
 });
 
 test("完成通知：失败取失败原因", () => {
-  const n = finishNotice({ name: "每日签到", status: "fail", summary: "任务执行失败：x", error: "页面上找不到「签到」按钮" });
+  const n = finishNotice([{ name: "每日签到", status: "fail", summary: "任务执行失败：x", error: "页面上找不到「签到」按钮" }]);
   assert.deepEqual(n, { title: "每日签到 · 失败", body: "页面上找不到「签到」按钮" });
+});
+
+test("完成通知：一轮多个 Profile 只发一条汇总", () => {
+  const run = (profileName: string, status: "ok" | "fail") => ({ name: "每日签到", status, summary: "", profileName });
+  assert.deepEqual(finishNotice([run("A", "ok"), run("B", "ok")]), { title: "每日签到 · 已完成", body: "2 个 Profile 全部成功" });
+  assert.deepEqual(finishNotice([run("A", "ok"), run("B", "fail"), run("C", "fail")]), {
+    title: "每日签到 · 部分失败",
+    body: "成功 1 个，失败 2 个：B、C",
+  });
+  assert.equal(finishNotice([run("A", "fail"), run("B", "fail")]).title, "每日签到 · 失败");
 });
 
 console.log(`\n${passed} passed`);

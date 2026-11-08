@@ -70,6 +70,7 @@ const api: AgentApi = {
    * 【作用】通知主进程以"失败重试"模式重新拉起该次运行关联的任务。
    */
   retryRun: (runId) => ipcRenderer.invoke(IPC.retryRun, runId),
+  retryBatch: (batchId) => ipcRenderer.invoke(IPC.retryBatch, batchId),
 
   /**
    * 【调用时机】用户在运行记录页勾选历史记录并点击批量删除，或单个删除某条记录时调用。

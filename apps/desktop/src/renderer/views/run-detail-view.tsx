@@ -22,7 +22,7 @@ const STATUS_LABEL = { ok: "成功", run: "运行中", fail: "失败" } as const
  * 【作用】
  * 1. 按需加载：通过 `window.agentApi.getRun(runId)` 仅在进入页面时按需加载单次运行的完整明细（包含全部步骤与截图引用）；
  * 2. 状态保护：若记录仍在运行中，自动重定向至实时推流页面 `LiveView`；
- * 3. 头部信息：展示任务名称、成功/失败状态、执行时刻、总耗时与触发方式，提供"重试"与"删除记录"操作；
+ * 3. 头部信息：展示任务名称、成功/失败状态、所用 Profile、执行时刻、总耗时与触发方式，提供"重试"（只重跑这个 Profile）与"删除记录"操作；属于一轮的运行，返回按钮回到这一轮的页面；
  * 4. 结果/原因卡片：若执行成功，通过 `ResultView` 呈现表单数据或纯文本结果；若失败，呈现醒目报错与解决建议；
  * 5. 过程截图图集（`ShotGallery`）：以缩略图直观呈现运行过程，点击进入可翻页的灯箱；
  * 6. 排查信息折叠卡片（默认收起）：「Agent 说明」按需查看 Agent 的自然语言总结；「运行日志」展开查看每一步工具调用的人话记录，供发现 Agent 行为不符预期时排查。
@@ -54,10 +54,12 @@ export function RunDetailView({ state, runId, go }: { state: AppState; runId: st
     if (summary?.status === "run") go("live", summary.id);
   }, [summary?.status]);
 
+  // 属于一轮的运行，返回这一轮的页面
+  const batchId = summary?.batch?.id ?? run?.batch?.id;
   const back = (
-    <button type="button" class="back" onClick={() => go("runs")}>
+    <button type="button" class="back" onClick={() => (batchId ? go("batch", batchId) : go("runs"))}>
       <Icon name="back" size={14} />
-      运行记录
+      {batchId ? "这一轮" : "运行记录"}
     </button>
   );
 
@@ -84,6 +86,7 @@ export function RunDetailView({ state, runId, go }: { state: AppState; runId: st
   const note = failed || isForm ? run.summary.trim() : "";
   const meta = [
     STATUS_LABEL[run.status],
+    run.profileName,
     formatDateTime(run.startTime),
     run.endTime ? `用时 ${formatDuration(run.endTime - run.startTime)}` : null,
     run.trigger,
@@ -108,7 +111,8 @@ export function RunDetailView({ state, runId, go }: { state: AppState; runId: st
     const ok = await confirmDialog({ title: "删除这条运行记录？", detail: "运行步骤和截图会一并删除，无法恢复。", confirmLabel: "删除", danger: true });
     if (!ok) return;
     await window.agentApi.deleteRuns([run.id]);
-    go("runs");
+    if (batchId) go("batch", batchId);
+    else go("runs");
   };
 
   return (

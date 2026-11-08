@@ -108,14 +108,31 @@ function firstLine(text: string | undefined): string {
   return "";
 }
 
+/** 发完成通知需要的运行记录信息 */
+export type NoticeRun = Pick<RunRecord, "name" | "status" | "summary" | "error" | "profileName">;
+
 /**
  * 任务跑完时系统通知的标题与正文。
  *
- * 【调用时机】TaskRunner 收尾（非用户主动停止）且用户开启了「任务完成时通知」时调用。
- * 【作用】标题是「任务名 · 已完成 / 失败」；成功时正文取结果第一句，失败时取失败原因。
+ * 【调用时机】TaskRunner 一轮收尾（非用户主动停止）且用户开启了「任务完成时通知」时调用。
+ * 【作用】
+ * - 只跑一个 Profile：标题是「任务名 · 已完成 / 失败」；成功时正文取结果第一句，失败时取失败原因；
+ * - 一轮跑了多个 Profile：只发这一条，标题按整体结果，正文写成功/失败各几个，并列出失败的 Profile。
+ *
+ * @param runs 这一轮跑完的运行记录（按顺序）
  */
-export function finishNotice(run: Pick<RunRecord, "name" | "status" | "summary" | "error">): { title: string; body: string } {
-  const ok = run.status === "ok";
-  const body = ok ? firstLine(run.summary) || "任务已完成" : firstLine(run.error) || "点击查看失败原因";
-  return { title: `${clip(run.name, NAME_MAX)} · ${ok ? "已完成" : "失败"}`, body: clip(body, BODY_MAX) };
+export function finishNotice(runs: NoticeRun[]): { title: string; body: string } {
+  const first = runs[0];
+  const name = clip(first?.name ?? "", NAME_MAX);
+  if (runs.length <= 1) {
+    const ok = first?.status === "ok";
+    const body = ok ? firstLine(first?.summary) || "任务已完成" : firstLine(first?.error) || "点击查看失败原因";
+    return { title: `${name} · ${ok ? "已完成" : "失败"}`, body: clip(body, BODY_MAX) };
+  }
+  const failed = runs.filter((r) => r.status !== "ok");
+  if (failed.length === 0) return { title: `${name} · 已完成`, body: `${runs.length} 个 Profile 全部成功` };
+  const title = `${name} · ${failed.length === runs.length ? "失败" : "部分失败"}`;
+  const names = failed.map((r) => r.profileName).filter(Boolean).join("、");
+  const body = `成功 ${runs.length - failed.length} 个，失败 ${failed.length} 个${names ? `：${names}` : ""}`;
+  return { title, body: clip(body, BODY_MAX) };
 }

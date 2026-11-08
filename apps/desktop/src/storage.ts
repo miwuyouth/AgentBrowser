@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { getProvider, listManagedProviders } from "@agent-browser/bridge";
+import { planRunProfiles } from "./batch.ts";
 import { RunStore } from "./run-store.ts";
 import { pickDefaultKernel, pickDefaultProfile, type DefaultsInput, type ProfileRef } from "./defaults.ts";
 import type { KernelItem, ProfileItem, TaskItem } from "./shared.ts";
@@ -151,7 +152,7 @@ function getFolderSize(dirPath: string): string {
  *
  * 【作用】
  * 从 `tasks.json` 读取数据，并与当前已检测到的内核及默认 Profile 重新校验关联：
- * 自动修正无效或缺失的 kernelId、kernelName、profileId、profileName，并确保 autoClose 默认值。
+ * 自动修正无效或缺失的 kernelId、kernelName，只保留属于该内核的 profileIds，并确保 autoClose 默认值。
  *
  * @returns 规范化的任务列表数组
  */
@@ -166,16 +167,16 @@ export function loadTasks(): TaskItem[] {
       kernels.find((k) => k.id === t.kernelId || k.id === t.kernel || k.name === t.kernel) || defaultKernel;
     const kernelId = matchedKernel?.id || t.kernelId || "chromium";
     const kernelName = matchedKernel?.name || t.kernel || "Chromium";
-    const defaultProfileId = `${kernelId}::default`;
-    const profileId = t.profileId && t.profileId.startsWith(`${kernelId}::`) ? t.profileId : defaultProfileId;
-    const profileName = t.profile || BUILTIN_PROFILE_NAME;
+    // 只保留属于这个内核的 Profile；已删除的 Profile 由运行时跳过
+    const profileIds = t.autoProfile
+      ? []
+      : [...new Set((Array.isArray(t.profileIds) ? t.profileIds : []).filter((id) => typeof id === "string" && id.startsWith(`${kernelId}::`)))];
 
     return {
       ...t,
       kernelId,
       kernel: kernelName,
-      profileId,
-      profile: profileName,
+      profileIds,
       autoClose: t.autoClose ?? true,
     };
   });
@@ -422,7 +423,7 @@ export function loadProfiles(): ProfileItem[] {
         providerId: k.providerId,
         builtin: true,
         isDefault: builtinId === defaultId,
-        taskCount: tasks.filter((t) => t.kernelId === k.id && t.profileId === builtinId).length,
+        taskCount: tasks.filter((t) => t.profileIds.includes(builtinId)).length,
         size: getFolderSize(builtinDir),
         dir: builtinDir,
       });
@@ -445,7 +446,7 @@ export function loadProfiles(): ProfileItem[] {
         providerId: rec.providerId ?? k.providerId,
         ...(rec.fingerprint ? { fingerprint: rec.fingerprint } : {}),
         isDefault: rec.id === defaultId,
-        taskCount: tasks.filter((t) => t.profileId === rec.id).length,
+        taskCount: tasks.filter((t) => t.profileIds.includes(rec.id)).length,
         size: getFolderSize(customDir),
         dir: customDir,
       });
@@ -477,7 +478,7 @@ export function formatProfileStamp(d: Date = new Date()): string {
  *
  * 【调用时机】
  * 1. 用户在环境配置页点击"新建 Profile"并确认时（由 IPC `IPC.createProfile` 触发）调用；
- * 2. 任务启动执行时若配置了自动新建 Profile，由 `resolveOrCreateProfile` 调用。
+ * 2. 任务启动执行时若配置了自动新建 Profile，由 `prepareRunProfiles` 调用。
  *
  * 【作用】
  * 1. 生成唯一目录名称并创建物理文件夹；
@@ -710,30 +711,48 @@ export function resolveKernelAndProfile(
 }
 
 /**
- * 任务执行时解析或自动按需创建可用 Profile。
+ * 保存任务时解析内核，并整理任务勾选的 Profile。
  *
  * 【调用时机】
- * 任务即将启动前（由 `TaskRunner.runTask` 触发）调用。
+ * 用户保存或更新任务（由 IPC `IPC.saveTask` 处理函数触发）时调用。
  *
  * 【作用】
- * 确保任务启动时一定有合法的 Profile 可用：
- * - 若已有可用 Profile 且 `forceNew === false`，直接复用；
- * - 若任务指定了自动新建 Profile（`forceNew === true`）或该内核下尚无可用 Profile，则自动新建一个以当前时间命名的全新 Profile 并返回。
+ * 只保留属于该内核、且仍然存在的 Profile，去重并按「运行环境」里的顺序排列（这也是运行顺序）。
+ * 一个都没有时返回空数组：运行时用该内核的默认 Profile，还没有就自动创建。
  *
  * @param kernelIdOrName 内核 ID 或名称
- * @param profileIdOrName Profile ID 或名称
- * @param newProfileName 自动新建 Profile 时使用的建议名称
- * @param forceNew 是否强制每次都新建全新 Profile
- * @returns 包含内核、Profile 以及是否刚刚新建的标记
+ * @param profileIds 任务勾选的 Profile ID
  */
-export async function resolveOrCreateProfile(
-  kernelIdOrName: string | undefined,
-  profileIdOrName: string | undefined,
-  newProfileName: string,
-  forceNew = false,
-): Promise<{ kernel: KernelItem; profile: ProfileItem; created: boolean }> {
-  const { kernel, profile } = resolveKernelAndOptionalProfile(kernelIdOrName, profileIdOrName);
-  if (profile && !forceNew) return { kernel, profile, created: false };
-  const createdProfile = await createProfileForKernel(kernel.id, newProfileName);
-  return { kernel, profile: createdProfile, created: true };
+export function resolveTaskProfiles(kernelIdOrName?: string, profileIds?: string[]): { kernel: KernelItem; profileIds: string[] } {
+  const kernel = resolveKernel(kernelIdOrName);
+  const wanted = Array.isArray(profileIds) ? profileIds : [];
+  const ids = loadProfiles()
+    .filter((p) => p.kernelId === kernel.id && wanted.includes(p.id))
+    .map((p) => p.id);
+  return { kernel, profileIds: ids };
+}
+
+/**
+ * 任务执行前，解析这一轮要依次使用的 Profile（必要时自动新建）。
+ *
+ * 【调用时机】
+ * 一轮运行开始前（由 `TaskRunner.runTask` 触发）调用。
+ *
+ * 【作用】
+ * 按 `planRunProfiles` 的规则挑出 Profile：任务勾选的、仍然存在的 Profile 按「运行环境」里的顺序排列；
+ * 任务设了「每次新建」或该内核下还没有 Profile 时，新建一个以当前时间命名的 Profile。
+ *
+ * @param task 要运行的任务
+ * @param only 只在这些 Profile 上运行（重试用）
+ * @returns 内核、依次要用的 Profile、是否新建了 Profile
+ */
+export async function prepareRunProfiles(
+  task: TaskItem,
+  only?: string[],
+): Promise<{ kernel: KernelItem; profiles: ProfileItem[]; created: boolean }> {
+  const kernel = resolveKernel(task.kernelId || task.kernel);
+  const plan = planRunProfiles(task, loadProfiles().filter((p) => p.kernelId === kernel.id), only);
+  if (plan.kind === "existing") return { kernel, profiles: plan.profiles, created: false };
+  const createdProfile = await createProfileForKernel(kernel.id, formatProfileStamp());
+  return { kernel, profiles: [createdProfile], created: true };
 }

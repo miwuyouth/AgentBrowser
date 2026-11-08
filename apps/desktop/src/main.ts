@@ -27,7 +27,7 @@ import {
   startBrowserSession,
   type BrowserSession,
 } from "@agent-browser/bridge";
-import { finishNotice, quitWarning, trayStatus, type QuitWarning } from "./background.ts";
+import { finishNotice, quitWarning, trayStatus, type NoticeRun, type QuitWarning } from "./background.ts";
 import { listModels, testModel } from "./model-probe.ts";
 import {
   activeProviderConfig,
@@ -39,7 +39,6 @@ import {
   type StoredSettings,
 } from "./settings.ts";
 import {
-  AUTO_PROFILE_LABEL,
   IPC,
   cloneTaskItem,
   errorMessage,
@@ -66,8 +65,8 @@ import {
   getRunStore,
   loadTasks,
   removeProfileById,
-  resolveKernelAndOptionalProfile,
   resolveKernelAndProfile,
+  resolveTaskProfiles,
   saveDefaultProfile,
   saveTasks,
   updateProfileMeta,
@@ -214,6 +213,7 @@ function state(): AppState {
   const profiles = loadProfiles();
   const running = taskRunner?.getActiveRun();
   const activeRun = running ? lightRun(running) : undefined;
+  const activeBatchId = taskRunner?.getActiveBatchId();
 
   return {
     platform: process.platform,
@@ -229,6 +229,7 @@ function state(): AppState {
     kernels,
     profiles,
     activeRun,
+    ...(activeBatchId ? { activeBatchId } : {}),
   };
 }
 
@@ -354,27 +355,28 @@ function notify(opts: { title: string; body: string }, onClick?: () => void) {
 }
 
 /**
- * 打开窗口并跳到某次运行的详情。
+ * 打开窗口并跳到某次运行的详情；传了 batchId 时跳到这一轮的页面。
  *
  * 【调用时机】用户点了「任务完成」系统通知。
  */
-function openRun(runId: string) {
+function openRun(runId: string, batchId?: string) {
   showWindow();
-  const send = () => emit({ type: "open_run", runId });
+  const send = () => emit({ type: "open_run", runId, ...(batchId ? { batchId } : {}) });
   if (window?.webContents.isLoading()) window.webContents.once("did-finish-load", send);
   else send();
 }
 
 /**
- * 任务跑完时按设置发系统通知。
+ * 任务（一整轮）跑完时按设置发系统通知。
  *
  * 【调用时机】TaskRunner.onFinished。
  * 【作用】用户自己停止的、关掉了通知开关的、正在看着这个窗口的（界面里已有轻提示）都不发。
  */
-function notifyRunFinished(run: Parameters<typeof finishNotice>[0] & { id: string }, byUser: boolean) {
-  if (byUser || !settings.general.notifyOnFinish) return;
+function notifyRunFinished(runs: (NoticeRun & { id: string; batch?: { id: string } })[], byUser: boolean) {
+  if (byUser || !settings.general.notifyOnFinish || runs.length === 0) return;
   if (window?.isVisible() && window.isFocused()) return;
-  notify(finishNotice(run), () => openRun(run.id));
+  const first = runs[0]!;
+  notify(finishNotice(runs), () => openRun(first.id, first.batch?.id));
 }
 
 /** 托盘菜单：一行只读状态 + 打开 + 退出 */
@@ -719,12 +721,9 @@ function registerIpc() {
   // 任务管理 IPC
   ipcMain.handle(IPC.saveTask, (_e, taskData: Partial<TaskItem>) => {
     const tasks = loadTasks();
-    // 自动模式或 Profile 还不存在时，留到任务执行时再自动创建
+    // 自动模式或该内核还没有 Profile 时，profileIds 为空，留到任务执行时再自动创建
     const autoProfile = !!taskData.autoProfile;
-    const { kernel, profile } = resolveKernelAndOptionalProfile(
-      taskData.kernelId || taskData.kernel,
-      autoProfile ? undefined : taskData.profileId || taskData.profile,
-    );
+    const { kernel, profileIds } = resolveTaskProfiles(taskData.kernelId || taskData.kernel, autoProfile ? [] : taskData.profileIds);
 
     if (taskData.id) {
       const idx = tasks.findIndex((t) => t.id === taskData.id);
@@ -737,8 +736,7 @@ function registerIpc() {
           kernelId: kernel.id,
           kernel: kernel.name,
           autoProfile,
-          profileId: autoProfile ? "" : (profile?.id ?? ""),
-          profile: autoProfile ? AUTO_PROFILE_LABEL : (profile?.name ?? ""),
+          profileIds,
           lastScheduledAt: Date.now(),
           updatedAt: Date.now(),
         } as TaskItem;
@@ -755,8 +753,7 @@ function registerIpc() {
         kernelId: kernel.id,
         kernel: kernel.name,
         autoProfile,
-        profileId: autoProfile ? "" : (profile?.id ?? ""),
-        profile: autoProfile ? AUTO_PROFILE_LABEL : (profile?.name ?? ""),
+        profileIds,
         autoClose: taskData.headless ? true : (taskData.autoClose ?? true),
         ...(taskData.headless ? { headless: true } : {}),
         mode: taskData.mode || "now",
@@ -776,8 +773,8 @@ function registerIpc() {
       taskData = newTask;
     }
     saveTasks(tasks);
-    // 记住这次选的 Profile，下次新建任务时默认预选它
-    if (!autoProfile && profile) saveDefaultProfile(profile.id);
+    // 只选了一个 Profile 时记住它，下次新建任务时默认预选它；选了多个时不去改全局默认
+    if (profileIds.length === 1) saveDefaultProfile(profileIds[0]!);
     pushState();
     return taskData;
   });
@@ -820,13 +817,28 @@ function registerIpc() {
     return state();
   });
 
-  // 从失败的运行记录重试：独立重新执行该任务
+  // 从失败的运行记录重试：只在这条记录用的那个 Profile 上重跑
   ipcMain.handle(IPC.retryRun, (_e, runId: string) => {
     const run = getRunStore().get(runId);
     if (!run || run.status === "run") throw new Error(`未找到可重试的运行记录 #${runId}`);
     if (!run.taskId) throw new Error("这条运行记录没有关联的任务，无法重试。");
     taskRunner
-      .runTask(run.taskId, "失败重试")
+      .runTask(run.taskId, "失败重试", run.profileId ? [run.profileId] : undefined)
+      .catch((err) => emit({ type: "notice", message: errorMessage(err), isError: true }));
+    return state();
+  });
+
+  // 重跑一轮里失败的那些 Profile（按原来的顺序）
+  ipcMain.handle(IPC.retryBatch, (_e, batchId: string) => {
+    const failed = getRunStore()
+      .list()
+      .filter((r) => r.batch?.id === batchId && r.status === "fail")
+      .sort((a, b) => a.batch!.index - b.batch!.index);
+    const taskId = failed[0]?.taskId;
+    if (!taskId) throw new Error("这一轮没有可重试的失败记录。");
+    const profileIds = [...new Set(failed.map((r) => r.profileId).filter((id): id is string => !!id))];
+    taskRunner
+      .runTask(taskId, "失败重试", profileIds.length > 0 ? profileIds : undefined)
       .catch((err) => emit({ type: "notice", message: errorMessage(err), isError: true }));
     return state();
   });
@@ -1107,7 +1119,7 @@ app.whenReady().then(() => {
   taskRunner.onIdle = () => scheduler.pump();
   scheduler.start();
 
-  taskRunner.onFinished = (run, byUser) => notifyRunFinished(run, byUser);
+  taskRunner.onFinished = (runs, byUser) => notifyRunFinished(runs, byUser);
 
   registerIpc();
   createTray();

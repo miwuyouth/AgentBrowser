@@ -1,3 +1,4 @@
+import { groupRuns, type BatchInfo } from "../../batch.ts";
 import type { AppState, RunSummary } from "../../shared.ts";
 import { Icon } from "../icons.tsx";
 import { PageHead } from "../page.tsx";
@@ -43,6 +44,38 @@ function RunRow({ run, go }: { run: RunSummary; go: Navigate }) {
 }
 
 /**
+ * 一整轮运行（多 Profile 任务）在列表里的一行。
+ *
+ * 【调用时机】在 `RunsView` 列表中遇到按轮分组后的条目时渲染。
+ *
+ * 【作用】
+ * 和单条运行一样只放「状态圆点 + 任务名 + 时间」，名称后面灰字写 Profile 数；有失败才加标记（全部失败写「失败」，部分失败写「N 个失败」）。
+ * 点击进入这一轮的页面，再从那里点进每个 Profile 的运行详情。
+ */
+function BatchRow({ batch, go }: { batch: BatchInfo; go: Navigate }) {
+  const open = () => go("batch", batch.id);
+  const allFailed = batch.fail > 0 && batch.fail === batch.runs.length && batch.runs.length === batch.total;
+
+  return (
+    <li
+      class="row"
+      role="link"
+      tabIndex={0}
+      aria-label={`${batch.name}，${batch.total} 个 Profile，${STATUS_LABEL[batch.status]}`}
+      onClick={open}
+      onKeyDown={(e) => e.key === "Enter" && open()}
+    >
+      <i class={`dot ${batch.status}`} />
+      <span class="row-name">{batch.name}</span>
+      <span class="row-kind">{batch.total} 个 Profile</span>
+      {batch.fail > 0 && !batch.running && <span class="tag-err">{allFailed ? "失败" : `${batch.fail} 个失败`}</span>}
+      <span class="row-meta">{batch.running ? "运行中" : formatRelative(batch.startTime)}</span>
+      <Icon name="chevron" size={14} />
+    </li>
+  );
+}
+
+/**
  * 历史运行记录工作区视图组件。
  *
  * 【调用时机】
@@ -50,7 +83,7 @@ function RunRow({ run, go }: { run: RunSummary; go: Navigate }) {
  *
  * 【作用】
  * 1. 展示全局历史运行记录，支持通过可选的 `taskId` 进行单一任务历史筛选；
- * 2. 显式按执行开始时间倒序排列（最新的在最前）；
+ * 2. 多 Profile 任务的同一轮合成一行（见 `groupRuns`），显式按执行开始时间倒序排列（最新的在最前）；
  * 3. 头部提供任务过滤标签及一键清除过滤按钮；
  * 4. 包含空状态提示。
  *
@@ -62,14 +95,15 @@ export function RunsView({ state, taskId, go }: { state: AppState; taskId: strin
   const task = state.tasks.find((t) => t.id === taskId);
   const filtered = !!task;
 
-  // 最新的在最前；显式按开始时间排，不依赖存储时的插入顺序
-  const runs = state.runs
-    .filter((r) => !filtered || r.taskId === task.id)
-    .sort((a, b) => b.startTime - a.startTime);
+  // 同一轮合成一行；最新的在最前，显式按开始时间排，不依赖存储时的插入顺序
+  const items = groupRuns(
+    state.runs.filter((r) => !filtered || r.taskId === task.id),
+    state.activeBatchId,
+  );
 
   return (
     <div class="page">
-      <PageHead title="运行记录" desc={`${runs.length} 条记录`}>
+      <PageHead title="运行记录" desc={`${items.length} 条记录`}>
         {task && (
           <span class="filter-tag">
             {task.name}
@@ -80,16 +114,20 @@ export function RunsView({ state, taskId, go }: { state: AppState; taskId: strin
         )}
       </PageHead>
 
-      {runs.length === 0 ? (
+      {items.length === 0 ? (
         <div class="empty">
           <h2>{filtered ? "这个任务还没有运行过" : "还没有运行记录"}</h2>
           <p>任务运行后，记录会出现在这里。</p>
         </div>
       ) : (
         <ul class="list">
-          {runs.map((r) => (
-            <RunRow key={r.id} run={r} go={go} />
-          ))}
+          {items.map((item) =>
+            item.kind === "batch" ? (
+              <BatchRow key={item.batch.id} batch={item.batch} go={go} />
+            ) : (
+              <RunRow key={item.run.id} run={item.run} go={go} />
+            ),
+          )}
         </ul>
       )}
     </div>

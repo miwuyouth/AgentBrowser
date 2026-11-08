@@ -69,8 +69,7 @@ test("克隆任务生成全新 ID、重置执行状态并保留全部配置参�
     ],
     kernelId: "cloakbrowser",
     kernel: "CloakBrowser",
-    profileId: "profile-jd-01",
-    profile: "JD",
+    profileIds: ["cloakbrowser::jd-01", "cloakbrowser::jd-02"],
     autoProfile: false,
     autoClose: true,
     headless: true,
@@ -108,8 +107,9 @@ test("克隆任务生成全新 ID、重置执行状态并保留全部配置参�
   assert.equal(cloned.doneCondition, sourceTask.doneCondition);
   assert.equal(cloned.kernelId, sourceTask.kernelId);
   assert.equal(cloned.kernel, sourceTask.kernel);
-  assert.equal(cloned.profileId, sourceTask.profileId);
-  assert.equal(cloned.profile, sourceTask.profile);
+  assert.deepEqual(cloned.profileIds, sourceTask.profileIds);
+  // Profile 列表是新数组，改副本不影响原任务
+  assert.notEqual(cloned.profileIds, sourceTask.profileIds);
   assert.equal(cloned.autoProfile, sourceTask.autoProfile);
   assert.equal(cloned.autoClose, sourceTask.autoClose);
   assert.equal(cloned.headless, sourceTask.headless);

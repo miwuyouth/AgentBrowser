@@ -358,12 +358,18 @@ svg.icon {
 .row-kind.on { color: var(--text-2); }
 .row-meta { min-width: 56px; text-align: right; color: var(--text-2); }
 .row > svg.icon { color: var(--text-3); }
+/* 不可点击的说明行（例如一轮里还没跑到的 Profile） */
+.row.row-static { cursor: default; }
+.row.row-static:hover { background: none; }
+.row-static .row-name { font-weight: 400; }
 
 /* 运行、编辑只在悬停或键盘聚焦时出现，平时行里只有名称和状态 */
 .row-actions { display: flex; align-items: center; gap: 4px; opacity: 0; transition: opacity 0.12s ease; }
 .row:hover .row-actions, .row:focus-within .row-actions { opacity: 1; }
 .row-btns { display: inline-flex; align-items: center; gap: 8px; flex: none; }
 .btn-sm { height: 28px; padding: 0 10px; font-size: 12.5px; border-radius: 7px; gap: 6px; }
+/* 「运行」和「运行中 2/4」宽度不同，固定最小宽度让各行的按钮上下对齐 */
+.btn-run { min-width: 92px; font-variant-numeric: tabular-nums; }
 
 .empty { display: grid; justify-items: center; gap: 8px; padding: 72px 24px; border: 1px dashed var(--line-strong); border-radius: var(--radius-lg); text-align: center; }
 .empty h2 { font-size: 16px; font-weight: 600; }
