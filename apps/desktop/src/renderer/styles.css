@@ -654,6 +654,9 @@ svg.icon {
 .modal.confirm { max-width: 400px; padding: 22px 24px 20px; }
 .confirm-title { font-size: 15px; font-weight: 600; line-height: 1.45; }
 .confirm-detail { display: grid; gap: 4px; margin-top: 8px; color: var(--text-2); line-height: 1.6; }
+.confirm-detail p { overflow-wrap: anywhere; }
+.confirm-check { display: inline-flex; align-items: center; gap: 8px; margin-top: 14px; color: var(--text-2); cursor: pointer; user-select: none; }
+.confirm-check input { width: 14px; height: 14px; margin: 0; accent-color: var(--accent); cursor: pointer; }
 .confirm-foot { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
 .confirm-foot .btn { min-width: 72px; }
 .btn-danger { border-color: transparent; background: var(--err); color: #fff; }

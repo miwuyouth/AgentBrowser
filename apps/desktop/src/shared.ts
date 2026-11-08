@@ -335,7 +335,33 @@ export type UiEvent =
   | { type: "kernel_progress"; kernelId: string; fraction?: number; message?: string }
   | { type: "notice"; message: string; isError?: boolean }
   /** 用户点了系统通知：界面跳到对应的运行详情 */
-  | { type: "open_run"; runId: string };
+  | { type: "open_run"; runId: string }
+  /** 主进程要用户确认（退出前提醒、文件授权等）：界面弹出应用内确认框，选完后通过 answerPrompt 回复 */
+  | { type: "prompt"; id: number; prompt: AppPrompt };
+
+/** 确认框的内容；主进程和渲染进程共用 */
+export interface AppPrompt {
+  /** 一句话问题，粗体显示，例如「删除这条运行记录？」 */
+  title: string;
+  /** 补充说明，每项一行，常规字号显示 */
+  detail?: string | string[];
+  /** 确认按钮文字，用动词，例如「删除」「卸载」 */
+  confirmLabel: string;
+  /** 不可恢复的操作：确认按钮用红色 */
+  danger?: boolean;
+  /** 取消按钮文字，默认「取消」 */
+  cancelLabel?: string;
+  /** 附带一个复选框（例如「不再提醒」），不传就没有 */
+  checkboxLabel?: string;
+}
+
+/** 用户对确认框的选择 */
+export interface PromptAnswer {
+  /** 点了确认按钮；取消、按 Esc、点遮罩为 false */
+  ok: boolean;
+  /** 确认时复选框是否勾选；没有复选框或取消时恒为 false */
+  checked: boolean;
+}
 
 /** 外观主题模式 */
 export type ThemeMode = "dark" | "light" | "system";
@@ -400,6 +426,10 @@ export interface AgentApi {
   copyText(text: string): Promise<void>;
   /** 设置应用外观主题 */
   setTheme(theme: ThemeMode): Promise<void>;
+  /** 回复主进程发来的确认框 */
+  answerPrompt(id: number, answer: PromptAnswer): Promise<void>;
+  /** 取还没回复的确认框（界面刚加载好时补弹，防止错过加载前发来的） */
+  pendingPrompts(): Promise<{ id: number; prompt: AppPrompt }[]>;
   /** 注册主进程 UI 事件监听器，返回解除监听的清理函数 */
   onEvent(listener: (e: UiEvent) => void): () => void;
 }
@@ -451,5 +481,7 @@ export const IPC = {
   openExternal: "app:open-external",
   copyText: "app:copy-text",
   setTheme: "app:set-theme",
+  answerPrompt: "app:answer-prompt",
+  pendingPrompts: "app:pending-prompts",
   event: "agent:event",
 } as const;

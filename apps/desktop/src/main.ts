@@ -5,7 +5,6 @@ import {
   Tray,
   app,
   clipboard,
-  dialog,
   ipcMain,
   nativeImage,
   nativeTheme,
@@ -54,6 +53,8 @@ import {
   type SettingsUpdate,
   type TaskItem,
   type ThemeMode,
+  type AppPrompt,
+  type PromptAnswer,
   type UiEvent,
 } from "./shared.ts";
 import {
@@ -143,6 +144,9 @@ let tray: Tray | null = null;
 let allowQuit = false;
 /** 退出确认框是否正在显示，避免连按 ⌘Q 叠出多个 */
 let confirmingQuit = false;
+/** 正在等用户回复的应用内确认框（退出前提醒、文件授权） */
+const prompts = new Map<number, { prompt: AppPrompt; resolve: (answer: PromptAnswer) => void }>();
+let promptSeq = 0;
 /** 正在关闭浏览器、等它关完再退出 */
 let closingBrowser = false;
 /** 系统正在关机 / 重启：不弹任何确认框挡住关机 */
@@ -405,34 +409,58 @@ function createTray() {
 }
 
 /**
+ * 在界面里弹应用内确认框，等用户选择。全应用不用系统对话框，保持界面风格一致。
+ *
+ * 【调用时机】主进程需要用户确认时调用：退出前提醒、Agent 读取本地文件前的授权。
+ * 【作用】
+ * 1. 把窗口拿到前台（藏在后台时会显示出来）；
+ * 2. 发 prompt 事件让界面弹框；界面还没加载好也没关系，加载好后会补拉未回复的确认框；
+ * 3. 多个确认框会在界面里排队，依次弹出。
+ *
+ * @param prompt 确认框内容
+ * @param opts.steal macOS 上是否抢焦点（用户主动退出时才抢；后台任务的请求只弹 Dock 提醒）
+ */
+function askUser(prompt: AppPrompt, opts: { steal?: boolean } = {}): Promise<PromptAnswer> {
+  showWindow();
+  if (isMac) {
+    if (opts.steal) app.focus({ steal: true });
+    else if (!window?.isFocused()) app.dock?.bounce("informational");
+  }
+  return new Promise((resolve) => {
+    const id = ++promptSeq;
+    prompts.set(id, { prompt, resolve });
+    emit({ type: "prompt", id, prompt });
+  });
+}
+
+/**
  * 退出前确认。
  *
  * 【调用时机】before-quit 里 quitWarning 认为需要确认时调用。
- * 【作用】窗口可见时以表单（sheet）形式挂在窗口上；默认按钮是「保持在后台 / 取消」，防止误按回车退出。
+ * 【作用】用应用内确认框问用户；焦点默认在「保持在后台 / 取消」上，防止误按回车退出。
  * 选「退出」才真正退出；勾了「不再提醒」就关掉设置里的「退出前提醒」。
  */
 async function confirmQuit(warning: QuitWarning) {
   confirmingQuit = true;
   const keep = settings.general.keepInBackground;
-  const parent = window?.isVisible() ? window : undefined;
-  if (!parent && isMac) app.focus({ steal: true });
-  const options: Electron.MessageBoxOptions = {
-    type: "warning",
-    message: warning.message,
-    detail: warning.detail,
-    buttons: [keep ? "保持在后台" : "取消", "退出"],
-    defaultId: 0,
-    cancelId: 0,
-    noLink: true,
-    ...(warning.canMute ? { checkboxLabel: "不再提醒" } : {}),
-  };
-  const result = await (parent ? dialog.showMessageBox(parent, options) : dialog.showMessageBox(options));
+  const answer = await askUser(
+    {
+      title: warning.message,
+      detail: warning.detail,
+      confirmLabel: "退出",
+      cancelLabel: keep ? "保持在后台" : "取消",
+      // 会中断正在跑或排队的任务：「退出」用红色
+      danger: !warning.canMute,
+      ...(warning.canMute ? { checkboxLabel: "不再提醒" } : {}),
+    },
+    { steal: true },
+  );
   confirmingQuit = false;
-  if (result.response !== 1) {
+  if (!answer.ok) {
     if (keep) hideToBackground();
     return;
   }
-  if (warning.canMute && result.checkboxChecked) {
+  if (warning.canMute && answer.checked) {
     settings.general.quitWarn = false;
     saveSettings(settings);
   }
@@ -476,8 +504,9 @@ function createAgentForSession(session: BrowserSession, opts: { maxSteps?: numbe
  * 在 `createAgentForSession` 内部调用，为当前 AgentSession 单独生成授权闭包。
  *
  * 【作用】
- * 类似 macOS TCC 权限控制，当 Agent 尝试通过工具读取本地文件上传至网页时触发弹窗拦截：
- * - 用户可选择「允许一次」、「总是允许」（仅在此次运行内记住）或「拒绝」；
+ * 类似 macOS TCC 权限控制，当 Agent 尝试通过工具读取本地文件上传至网页时先询问用户：
+ * - 用应用内确认框问用户：「允许」或「拒绝」，勾选「这次运行不再询问这个文件」则本次运行内记住；
+ * - 焦点默认在「拒绝」上，按 Esc / 点遮罩也是拒绝；
  * - 拦截结果实时发送通知消息并向 Agent 返回授权布尔值，防止本地隐私敏感文件被无感知读取。
  *
  * @returns 接受文件绝对路径并异步返回是否允许读取的门控函数
@@ -486,18 +515,15 @@ function makeFilePermissionGate(): (absolutePath: string) => Promise<boolean> {
   const alwaysAllowed = new Set<string>();
   return async (absolutePath: string) => {
     if (alwaysAllowed.has(absolutePath)) return true;
-    const choice = await dialog.showMessageBox({
-      type: "question",
-      title: "Agent 请求读取本地文件",
-      message: "Agent 想读取这个文件并上传到网页：",
+    const answer = await askUser({
+      title: "Agent 想读取这个文件并上传到网页",
       detail: absolutePath,
-      buttons: ["允许一次", "总是允许", "拒绝"],
-      defaultId: 0,
-      cancelId: 2,
-      noLink: true,
+      confirmLabel: "允许",
+      cancelLabel: "拒绝",
+      checkboxLabel: "这次运行不再询问这个文件",
     });
-    if (choice.response === 1) alwaysAllowed.add(absolutePath);
-    const allowed = choice.response !== 2;
+    if (answer.ok && answer.checked) alwaysAllowed.add(absolutePath);
+    const allowed = answer.ok;
     emit({
       type: "notice",
       message: allowed
@@ -924,6 +950,15 @@ function registerIpc() {
     emit({ type: "notice", message: "已复制到剪贴板" });
   });
 
+  // 应用内确认框：界面回复选择 / 界面加载好后补拉还没回复的
+  ipcMain.handle(IPC.answerPrompt, (_e, id: number, answer: PromptAnswer) => {
+    const entry = prompts.get(id);
+    if (!entry) return;
+    prompts.delete(id);
+    entry.resolve({ ok: answer?.ok === true, checked: answer?.checked === true });
+  });
+  ipcMain.handle(IPC.pendingPrompts, () => [...prompts].map(([id, { prompt }]) => ({ id, prompt })));
+
   // 主题模式控制
   ipcMain.handle(IPC.setTheme, (_e, theme: ThemeMode) => {
     nativeTheme.themeSource = theme;
@@ -979,6 +1014,10 @@ function createWindow({ show = true }: { show?: boolean } = {}) {
     else app.quit();
   });
   window.on("closed", () => (window = null));
+  // 等用户确认时界面崩了：重新加载，界面起来后会补弹还没回复的确认框
+  window.webContents.on("render-process-gone", (_e, details) => {
+    if (details.reason !== "clean-exit" && prompts.size > 0) window?.reload();
+  });
 }
 
 // 只允许一个实例：应用常驻后台时再次打开它，应该把已有的窗口拿出来，而不是再起一个（否则会有两个调度器重复跑任务）

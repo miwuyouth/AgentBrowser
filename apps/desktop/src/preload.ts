@@ -165,6 +165,18 @@ const api: AgentApi = {
    * 【调用时机】渲染进程组件（如 useAppState、ToastHost）挂载初始化时调用。
    * 【作用】监听主进程广播的 UI 事件（state 变化、run_update 实时步骤、内核进度、轻提示 notice 等），返回取消监听函数。
    */
+  /**
+   * 【调用时机】主进程发来 prompt 事件、用户在应用内确认框里做出选择后调用。
+   * 【作用】把选择（以及复选框是否勾选）交回主进程。
+   */
+  answerPrompt: (id, answer) => ipcRenderer.invoke(IPC.answerPrompt, id, answer),
+
+  /**
+   * 【调用时机】界面加载好时调用一次。
+   * 【作用】补弹界面加载前主进程就已发出的确认框。
+   */
+  pendingPrompts: () => ipcRenderer.invoke(IPC.pendingPrompts),
+
   onEvent(listener) {
     const handler = (_: unknown, e: UiEvent) => listener(e);
     ipcRenderer.on(IPC.event, handler);

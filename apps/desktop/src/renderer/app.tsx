@@ -6,7 +6,7 @@ import { Sidebar, type Navigate, type View } from "./sidebar.tsx";
 import { useAppState } from "./state.ts";
 import { initTheme } from "./theme.ts";
 import { ToastHost } from "./toast.tsx";
-import { ConfirmHost } from "./confirm.tsx";
+import { ConfirmHost, showAppPrompt } from "./confirm.tsx";
 import { SettingsModal, type SettingsTab } from "./views/settings-modal.tsx";
 import { EnvView } from "./views/env-view.tsx";
 import { EditorView } from "./views/editor-view.tsx";
@@ -74,6 +74,15 @@ function Main() {
       }),
     [],
   );
+
+  // 主进程要用户确认（退出前提醒、文件授权）：一律用应用内确认框，不用系统弹窗
+  useEffect(() => {
+    const off = window.agentApi.onEvent((e) => {
+      if (e.type === "prompt") showAppPrompt(e.id, e.prompt);
+    });
+    void window.agentApi.pendingPrompts().then((list) => list.forEach((p) => showAppPrompt(p.id, p.prompt)));
+    return off;
+  }, []);
 
   if (!state || onboarding === null) return null;
 
