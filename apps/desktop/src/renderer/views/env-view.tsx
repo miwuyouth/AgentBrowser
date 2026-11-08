@@ -5,6 +5,7 @@ import { Icon } from "../icons.tsx";
 import { Modal } from "../modal.tsx";
 import { PageHead } from "../page.tsx";
 import { toast } from "../toast.tsx";
+import { confirmDialog } from "../confirm.tsx";
 
 /**
  * 包装执行带状态返回值的异步操作，并统一向用户反馈轻提示。
@@ -83,7 +84,15 @@ function ProfileRow({ profile: p, index, kernel, busy }: { profile: ProfileItem;
     try {
       let r = await window.agentApi.openBrowser(p.kernelId, p.id);
       // 被残留的浏览器进程占用：问一句，同意就关掉它再试一次
-      if (!r.ok && r.lockedPid && window.confirm(`这个 Profile 正被另一个浏览器进程占用（PID ${r.lockedPid}）。关闭它并重试？`)) {
+      if (
+        !r.ok &&
+        r.lockedPid &&
+        (await confirmDialog({
+          title: "关闭占用它的浏览器并重试？",
+          detail: `这个 Profile 正被另一个浏览器进程占用（PID ${r.lockedPid}）。`,
+          confirmLabel: "关闭并重试",
+        }))
+      ) {
         const released = await window.agentApi.releaseProfile(r.lockedPid);
         if (!released.ok) return toast(released.message, true);
         r = await window.agentApi.openBrowser(p.kernelId, p.id);
@@ -125,11 +134,11 @@ function ProfileRow({ profile: p, index, kernel, busy }: { profile: ProfileItem;
    * 删除自定义 Profile。
    * 【调用时机】用户点击垃圾桶删除图标时调用。
    */
-  const remove = () => {
-    const parts = [`删除 Profile「${p.name}」？`];
-    if (p.taskCount > 0) parts.push(`有 ${p.taskCount} 个任务指定了它，删除后会改用其他 Profile。`);
-    parts.push("它保存的网站登录状态会一并删除，无法恢复。");
-    if (window.confirm(parts.join("\n"))) void attempt(() => window.agentApi.deleteProfile(p.id));
+  const remove = async () => {
+    const detail = ["它保存的网站登录状态会一并删除，无法恢复。"];
+    if (p.taskCount > 0) detail.push(`有 ${p.taskCount} 个任务指定了它，删除后会改用其他 Profile。`);
+    const ok = await confirmDialog({ title: `删除 Profile「${p.name}」？`, detail, confirmLabel: "删除", danger: true });
+    if (ok) void attempt(() => window.agentApi.deleteProfile(p.id));
   };
 
   return (
@@ -272,9 +281,11 @@ function KernelCard({ kernel: k, profiles, busy, onNew }: { kernel: KernelItem; 
    * 卸载已下载安装的浏览器内核。
    * 【调用时机】用户点击内核头部的"卸载"按钮并确认时调用。
    */
-  const uninstall = () => {
-    const used = k.taskCount > 0 ? `有 ${k.taskCount} 个任务用到它。` : "";
-    if (window.confirm(`卸载「${k.name}」？${used}已有的 Profile 数据会保留。`)) void report(() => window.agentApi.uninstallKernel(k.id));
+  const uninstall = async () => {
+    const detail = ["已有的 Profile 数据会保留。"];
+    if (k.taskCount > 0) detail.unshift(`有 ${k.taskCount} 个任务用到它。`);
+    const ok = await confirmDialog({ title: `卸载「${k.name}」？`, detail, confirmLabel: "卸载" });
+    if (ok) void report(() => window.agentApi.uninstallKernel(k.id));
   };
 
   return (

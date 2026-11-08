@@ -6,6 +6,7 @@ import { Sidebar, type Navigate, type View } from "./sidebar.tsx";
 import { useAppState } from "./state.ts";
 import { initTheme } from "./theme.ts";
 import { ToastHost } from "./toast.tsx";
+import { ConfirmHost } from "./confirm.tsx";
 import { SettingsModal, type SettingsTab } from "./views/settings-modal.tsx";
 import { EnvView } from "./views/env-view.tsx";
 import { EditorView } from "./views/editor-view.tsx";
@@ -125,6 +126,7 @@ function App() {
     <>
       <Main />
       <ToastHost />
+      <ConfirmHost />
     </>
   );
 }

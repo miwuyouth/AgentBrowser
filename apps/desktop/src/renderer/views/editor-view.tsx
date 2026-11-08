@@ -5,6 +5,7 @@ import { PageHead } from "../page.tsx";
 import { nextSlot, scheduleLabel, type RepeatKind } from "../../schedule.ts";
 import type { Navigate } from "../sidebar.tsx";
 import { formatUpcoming } from "../time.ts";
+import { confirmDialog } from "../confirm.tsx";
 
 type Repeat = "manual" | Exclude<RepeatKind, "manual" | "once">;
 const REPEATS: { value: Repeat; label: string }[] = [
@@ -219,10 +220,12 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
    * 用户点击高级设置底部的"删除这个任务"链接并确认对话框时调用。
    *
    * 【作用】
-   * 弹出系统确认框；确认后调用 IPC `window.agentApi.deleteTask(task.id)` 物理删除并返回任务列表。
+   * 弹出确认框；确认后调用 IPC `window.agentApi.deleteTask(task.id)` 物理删除并返回任务列表。
    */
   const remove = async () => {
-    if (!task || !window.confirm(`删除任务「${task.name}」？它的运行记录会保留。`)) return;
+    if (!task) return;
+    const ok = await confirmDialog({ title: `删除任务「${task.name}」？`, detail: "它的运行记录会保留。", confirmLabel: "删除", danger: true });
+    if (!ok) return;
     await window.agentApi.deleteTask(task.id);
     go("tasks");
   };

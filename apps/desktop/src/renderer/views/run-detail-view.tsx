@@ -9,6 +9,7 @@ import { getRunResult, ResultView } from "../result.tsx";
 import type { Navigate } from "../sidebar.tsx";
 import { describeStep, visibleSteps } from "../step-format.ts";
 import { formatDateTime, formatDuration } from "../time.ts";
+import { confirmDialog } from "../confirm.tsx";
 
 const STATUS_LABEL = { ok: "成功", run: "运行中", fail: "失败" } as const;
 
@@ -104,7 +105,8 @@ export function RunDetailView({ state, runId, go }: { state: AppState; runId: st
    * 【调用时机】用户点击右上角垃圾桶删除图标并确认时调用。
    */
   const remove = async () => {
-    if (!window.confirm("删除这条运行记录？删除后无法恢复。")) return;
+    const ok = await confirmDialog({ title: "删除这条运行记录？", detail: "运行步骤和截图会一并删除，无法恢复。", confirmLabel: "删除", danger: true });
+    if (!ok) return;
     await window.agentApi.deleteRuns([run.id]);
     go("runs");
   };
