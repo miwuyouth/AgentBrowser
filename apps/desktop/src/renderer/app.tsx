@@ -6,7 +6,7 @@ import { Sidebar, type Navigate, type View } from "./sidebar.tsx";
 import { useAppState } from "./state.ts";
 import { initTheme } from "./theme.ts";
 import { ToastHost } from "./toast.tsx";
-import { SettingsModal } from "./views/settings-modal.tsx";
+import { SettingsModal, type SettingsTab } from "./views/settings-modal.tsx";
 import { EnvView } from "./views/env-view.tsx";
 import { EditorView } from "./views/editor-view.tsx";
 import { LiveView } from "./views/live-view.tsx";
@@ -27,15 +27,16 @@ const ONBOARDED_KEY = "agent_browser_onboarded";
  * 1. 订阅全局状态 Hook（`useAppState`）；
  * 2. 维护前端路由导航状态（`route: { view, id }`）并分发路由跳转闭包 `go`；
  * 3. 首次加载时根据 `getReadiness` 与本地存储状态决定是否展示新手引导向导（`Onboarding`）；
- * 4. 监听全局快捷键（⌘N / Ctrl+N），支持任意页面快速直达新建任务页面；
+ * 4. 监听全局快捷键（⌘N 新建任务、⌘, 打开设置），并响应系统通知点击跳到运行详情；
  * 5. 组装左侧 `Sidebar` 导航与右侧主视区视图切换（TasksView / EditorView / RunsView / RunDetailView / LiveView / EnvView），并管理设置弹窗开闭。
  */
 function Main() {
   const state = useAppState();
   const [route, setRoute] = useState<{ view: View; id?: string }>({ view: "tasks" });
   const go: Navigate = (view, id) => setRoute({ view, ...(id ? { id } : {}) });
+  /** 设置弹窗打开在哪个标签；null = 关闭 */
+  const [settingsTab, setSettingsTab] = useState<SettingsTab | null>(null);
   /** null = 还没拿到状态，暂时不决定要不要显示引导 */
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [onboarding, setOnboarding] = useState<boolean | null>(null);
 
   // 第一次拿到状态时决定一次：已引导过、或者本来就全部就绪的老用户，不再打扰
@@ -46,17 +47,32 @@ function Main() {
     setOnboarding(localStorage.getItem(ONBOARDED_KEY) !== "1" && !ready);
   }, [state, onboarding]);
 
-  // ⌘N：新建任务
+  // ⌘N：新建任务；⌘,：打开设置
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "n") {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.key === "n") {
         e.preventDefault();
         go("editor");
+      } else if (e.key === ",") {
+        e.preventDefault();
+        setSettingsTab("general");
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  // 用户点了「任务完成」系统通知：跳到那次运行的详情
+  useEffect(
+    () =>
+      window.agentApi.onEvent((e) => {
+        if (e.type !== "open_run") return;
+        setSettingsTab(null);
+        go("run", e.runId);
+      }),
+    [],
+  );
 
   if (!state || onboarding === null) return null;
 
@@ -80,17 +96,17 @@ function Main() {
         view={view}
         taskCount={state.tasks.length}
         onNavigate={go}
-        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSettings={() => setSettingsTab("general")}
       />
       <main class="main">
-        {view === "tasks" && <TasksView state={state} go={go} onOpenSettings={() => setSettingsOpen(true)} />}
+        {view === "tasks" && <TasksView state={state} go={go} onOpenSettings={() => setSettingsTab("model")} />}
         {view === "editor" && <EditorView key={id ?? "new"} state={state} taskId={id} go={go} />}
         {view === "runs" && <RunsView state={state} taskId={id} go={go} />}
         {view === "run" && <RunDetailView key={id} state={state} runId={id} go={go} />}
         {view === "live" && <LiveView state={state} go={go} />}
         {view === "env" && <EnvView state={state} />}
       </main>
-      {settingsOpen && <SettingsModal state={state} onClose={() => setSettingsOpen(false)} />}
+      {settingsTab && <SettingsModal state={state} tab={settingsTab} onClose={() => setSettingsTab(null)} />}
     </div>
   );
 }

@@ -24,6 +24,12 @@ const api: AgentApi = {
   saveSettings: (update) => ipcRenderer.invoke(IPC.saveSettings, update),
 
   /**
+   * 【调用时机】用户在「设置 › 通用」里拨动开关时调用。
+   * 【作用】把改动的那一项交给主进程立即生效（后台常驻、开机启动、完成通知、退出提醒），返回最新状态。
+   */
+  saveGeneral: (patch) => ipcRenderer.invoke(IPC.saveGeneral, patch),
+
+  /**
    * 【调用时机】用户在设置弹窗点击"获取列表"时调用。
    * 【作用】用表单当前的地址与密钥向模型服务拉取可选模型列表（无需先保存）。
    */

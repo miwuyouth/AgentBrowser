@@ -38,6 +38,8 @@ export class TaskRunner {
   private deadline: ReturnType<typeof setTimeout> | null = null;
   /** 是否因超时而触发中止（用于区分用户主动取消与超时中断） */
   private timedOut = false;
+  /** 本次运行是否是用户自己点「停止」（或退出应用）中断的；这种情况不发完成通知 */
+  private cancelledByUser = false;
   /** 当前运行启动的毫秒时间戳 */
   private startTime = 0;
 
@@ -116,6 +118,12 @@ export class TaskRunner {
    * 一次运行彻底结束后（浏览器已按设置关闭或保留）被调用，调度器据此继续推进排队等待的任务。
    */
   onIdle?: () => void;
+
+  /**
+   * 一次运行收尾（结果已落盘）时的回调。
+   * 主进程据此发「任务完成」系统通知；byUser 为 true 表示用户自己停止的，不需要通知。
+   */
+  onFinished?: (run: RunRecord, byUser: boolean) => void;
 
   /**
    * 获取当前正在执行的任务明细对象。
@@ -206,6 +214,7 @@ export class TaskRunner {
     this.startTime = Date.now();
     this.currentAbortController = new AbortController();
     this.timedOut = false;
+    this.cancelledByUser = false;
     const limitMs = (task.timeoutMinutes ?? 0) * 60_000;
     if (limitMs > 0) {
       this.deadline = setTimeout(() => {
@@ -252,6 +261,7 @@ export class TaskRunner {
       this.finishTask(task, "ok");
     } catch (err) {
       // 优先级：超时 > 用户终止 > Agent 给出的停止原因 > 其他异常
+      this.cancelledByUser = !this.timedOut && !!this.currentAbortController?.signal.aborted;
       const stop = this.timedOut
         ? describeTimeout(task.timeoutMinutes)
         : this.currentAbortController?.signal.aborted
@@ -470,6 +480,7 @@ export class TaskRunner {
     }
 
     this.emitEvent({ type: "notice", message: `任务「${task.name}」执行完成（${status === "ok" ? "成功" : "失败"}）` });
+    this.onFinished?.(this.activeRun, this.cancelledByUser);
   }
 
   /**

@@ -1,5 +1,5 @@
 import { useState } from "preact/hooks";
-import type { AppState, ProviderKind } from "../../shared.ts";
+import type { AppState, GeneralSettings, ProviderKind } from "../../shared.ts";
 import { errorMessage } from "../../shared.ts";
 import { Modal } from "../modal.tsx";
 import { toast } from "../toast.tsx";
@@ -30,14 +30,73 @@ function keyHint(kind: ProviderKind, credentials: AppState["provider"]["credenti
   return kind === "anthropic" ? "尚未配置密钥。" : "未配置密钥（本地服务通常不需要）。";
 }
 
+/** 设置弹窗的两个标签：通用（开关即时生效）、模型服务（要点保存，保存前会检测） */
+export type SettingsTab = "general" | "model";
+
+type GeneralKey = keyof GeneralSettings;
+
 /**
- * 全局模型服务配置模态弹窗组件。
+ * 「设置 › 通用」：应用行为开关，拨动即生效，没有保存按钮。
+ *
+ * 【调用时机】设置弹窗切到「通用」标签时渲染。
+ * 【作用】后台常驻、开机启动、任务完成通知、退出前提醒；拨动时先在界面上立即翻转，主进程失败再弹回并提示。
+ */
+function GeneralPane({ state }: { state: AppState }) {
+  const g = state.general;
+  const [pending, setPending] = useState<Partial<GeneralSettings>>({});
+  const place = state.platform === "darwin" ? "菜单栏" : "托盘";
+  const value = (key: GeneralKey) => pending[key] ?? g[key];
+
+  const toggle = async (key: GeneralKey) => {
+    const next = !value(key);
+    setPending((p) => ({ ...p, [key]: next }));
+    try {
+      await window.agentApi.saveGeneral({ [key]: next });
+    } catch (err) {
+      toast(errorMessage(err), true);
+    } finally {
+      setPending(({ [key]: _done, ...rest }) => rest);
+    }
+  };
+
+  const row = (key: GeneralKey, title: string, on: string, off: string, note?: string) => {
+    const checked = value(key);
+    return (
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        disabled={!!note}
+        class={`switch-row ${checked ? "on" : ""}`}
+        onClick={() => void toggle(key)}
+      >
+        <span class="switch-row-text">
+          <b>{title}</b>
+          <small>{note ?? (checked ? on : off)}</small>
+        </span>
+        <i class="switch-knob" />
+      </button>
+    );
+  };
+
+  return (
+    <div class="modal-body setting-list">
+      {row("keepInBackground", "关闭窗口后留在后台", `关掉窗口后应用留在${place}，定时任务照常运行`, "关掉窗口就退出应用，定时任务不再运行")}
+      {row("openAtLogin", "开机时启动", `登录电脑后在${place}里启动，不弹出窗口`, "需要手动打开应用，定时任务才会运行", g.loginItemNote)}
+      {row("notifyOnFinish", "任务完成时通知", "成功或失败都发系统通知；正在看这个窗口时不打扰", "只在窗口里提示")}
+      {row("quitWarn", "退出前提醒", "有定时任务时，退出前确认一次", "有定时任务也直接退出；有任务在运行时仍会确认")}
+    </div>
+  );
+}
+
+/**
+ * 全局设置模态弹窗组件（通用 / 模型服务两个标签）。
  *
  * 【调用时机】
- * 用户在侧边栏左下角点击"设置"按钮、或在任务列表页顶部点击未就绪横幅的"去配置"按钮时浮层渲染。
+ * 用户在侧边栏左下角点击"设置"（或按 ⌘,）时打开「通用」；在任务列表页顶部未就绪横幅点"去配置"时直接打开「模型服务」。
  *
  * 【作用】
- * 统一管理 Agent 驱动所需的全局大语言模型配置：
+ * 「通用」见 GeneralPane。「模型服务」统一管理 Agent 驱动所需的全局大语言模型配置：
  * 1. 切换服务商种类（Anthropic Claude 或 OpenAI 兼容协议）；
  * 2. 配置接口 BaseURL 与主要推理模型名称；
  * 3. 安全管理 API Key：支持输入新密钥（主进程系统钥匙串加密落盘）、留空保持原值、或主动一键清除已存储的密钥；
@@ -45,9 +104,11 @@ function keyHint(kind: ProviderKind, credentials: AppState["provider"]["credenti
  * 5. 校验表单并通过 IPC `window.agentApi.saveSettings` 进行持久化。
  *
  * @param state 当前全局应用状态
+ * @param tab 打开时显示哪个标签
  * @param onClose 关闭弹窗回调
  */
-export function SettingsModal({ state, onClose }: { state: AppState; onClose: () => void }) {
+export function SettingsModal({ state, tab: initialTab, onClose }: { state: AppState; tab: SettingsTab; onClose: () => void }) {
+  const [tab, setTab] = useState<SettingsTab>(initialTab);
   const [kind, setKind] = useState<ProviderKind>(state.provider.kind);
   const p = state.providers[kind];
 
@@ -166,7 +227,24 @@ export function SettingsModal({ state, onClose }: { state: AppState; onClose: ()
 
   return (
     <Modal title="设置" onClose={onClose} width={560}>
+      <div class="modal-tabs" role="tablist">
+        {(
+          [
+            ["general", "通用"],
+            ["model", "模型服务"],
+          ] as const
+        ).map(([key, label]) => (
+          <button key={key} type="button" role="tab" aria-selected={tab === key} class={tab === key ? "on" : ""} onClick={() => setTab(key)}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "general" && <GeneralPane state={state} />}
+
+      {/* 切到「通用」时只是隐藏，表单里填了一半的内容不会丢 */}
       <form
+        hidden={tab !== "model"}
         onSubmit={(e) => {
           e.preventDefault();
           if (valid && !saving) void save();

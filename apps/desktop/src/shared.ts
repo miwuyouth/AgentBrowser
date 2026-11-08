@@ -245,8 +245,30 @@ export interface ProviderSettingsView {
   credentials: "stored" | "environment" | "none";
 }
 
+/** 「设置 › 通用」里的应用行为开关（改动立即生效，没有保存按钮） */
+export interface GeneralSettings {
+  /** 关闭窗口后留在后台（菜单栏 / 托盘）继续运行，定时任务照常执行 */
+  keepInBackground: boolean;
+  /** 开机（登录系统）时在后台启动；真实值以系统登录项为准，不存进 settings.json */
+  openAtLogin: boolean;
+  /** 任务跑完（成功或失败）时发系统通知；用户自己点「停止」的不发 */
+  notifyOnFinish: boolean;
+  /** 只有定时任务（没有任务在跑）时，退出前也确认一次；有任务在跑或排队时总会确认 */
+  quitWarn: boolean;
+}
+
+/** 发给界面的通用设置视图 */
+export interface GeneralSettingsView extends GeneralSettings {
+  /** 开机启动不可用时的原因（开发模式、系统不支持）；可用时不存在 */
+  loginItemNote?: string;
+}
+
 /** 全局桌面应用状态对象（主进程全量同步至渲染进程） */
 export interface AppState {
+  /** 运行平台（process.platform），界面据此说「菜单栏」还是「托盘」 */
+  platform: string;
+  /** 通用设置 */
+  general: GeneralSettingsView;
   /** 浏览器连接状态 */
   browser: BrowserStatus;
   /** 浏览器连接或启动异常信息 */
@@ -311,7 +333,9 @@ export type UiEvent =
   | { type: "state"; state: AppState }
   | { type: "run_update"; run: RunRecord }
   | { type: "kernel_progress"; kernelId: string; fraction?: number; message?: string }
-  | { type: "notice"; message: string; isError?: boolean };
+  | { type: "notice"; message: string; isError?: boolean }
+  /** 用户点了系统通知：界面跳到对应的运行详情 */
+  | { type: "open_run"; runId: string };
 
 /** 外观主题模式 */
 export type ThemeMode = "dark" | "light" | "system";
@@ -330,6 +354,8 @@ export interface AgentApi {
   getState(): Promise<AppState>;
   /** 保存模型服务商设置 */
   saveSettings(update: SettingsUpdate): Promise<AppState>;
+  /** 修改通用设置（只传要改的项），立即生效 */
+  saveGeneral(patch: Partial<GeneralSettings>): Promise<AppState>;
   /** 用表单当前值向接口拉取可用模型列表 */
   listModels(req: ModelProbeRequest): Promise<ModelListResult>;
   /** 用表单当前值发一次最小请求，验证接口、密钥与模型是否可用 */
@@ -404,6 +430,7 @@ export const errorMessage = (err: unknown): string => (err instanceof Error ? er
 export const IPC = {
   getState: "app:get-state",
   saveSettings: "settings:save",
+  saveGeneral: "settings:save-general",
   listModels: "settings:list-models",
   testModel: "settings:test-model",
   saveTask: "tasks:save",

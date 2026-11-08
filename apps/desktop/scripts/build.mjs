@@ -40,10 +40,12 @@ for (const f of ["index.html", "styles.css", "logo.svg"]) {
   if (existsSync(srcFile)) cpSync(srcFile, path.join(dist, "renderer", f));
 }
 
-// 主进程窗口图标
+// 主进程窗口图标、菜单栏（托盘）图标
 const assetsDir = path.join(root, "assets");
-const pngIcon = path.join(assetsDir, "icon.png");
-if (existsSync(pngIcon)) cpSync(pngIcon, path.join(dist, "icon.png"));
+for (const f of ["icon.png", "trayTemplate.png", "trayTemplate@2x.png"]) {
+  const srcFile = path.join(assetsDir, f);
+  if (existsSync(srcFile)) cpSync(srcFile, path.join(dist, f));
+}
 
 console.log("desktop app built");
 process.exit(0);

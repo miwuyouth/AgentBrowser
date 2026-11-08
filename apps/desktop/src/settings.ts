@@ -15,8 +15,22 @@ interface StoredProvider {
   apiKey?: string;
 }
 
+/** 存在 settings.json 里的通用设置（开机启动以系统登录项为准，不存这里） */
+export interface StoredGeneral {
+  keepInBackground: boolean;
+  notifyOnFinish: boolean;
+  quitWarn: boolean;
+  /** 第一次关窗口躲进后台时，是否已经发过「仍在后台运行」的提示 */
+  closeHintShown: boolean;
+}
+
+/** 通用设置的默认值：留在后台、完成通知、退出提醒都默认打开 */
+const DEFAULT_GENERAL: StoredGeneral = { keepInBackground: true, notifyOnFinish: true, quitWarn: true, closeHintShown: false };
+
 /** 本地 settings.json 的全量持久化存储数据结构 */
 export interface StoredSettings {
+  /** 通用设置 */
+  general: StoredGeneral;
   /** 当前选中的全局默认模型服务商 */
   provider: ProviderKind;
   /** Anthropic (Claude) 相关配置 */
@@ -67,6 +81,7 @@ export function loadSettings(): StoredSettings {
     raw = JSON.parse(readFileSync(file(), "utf8"));
   } catch {}
   return {
+    general: { ...DEFAULT_GENERAL, ...raw.general },
     provider: raw.provider ?? "anthropic",
     anthropic: raw.anthropic ?? {},
     openai: raw.openai ?? {},

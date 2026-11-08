@@ -1,4 +1,19 @@
-import { BrowserWindow, app, clipboard, dialog, ipcMain, nativeTheme, net, protocol, shell } from "electron";
+import {
+  BrowserWindow,
+  Menu,
+  Notification,
+  Tray,
+  app,
+  clipboard,
+  dialog,
+  ipcMain,
+  nativeImage,
+  nativeTheme,
+  net,
+  powerMonitor,
+  protocol,
+  shell,
+} from "electron";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -13,6 +28,7 @@ import {
   startBrowserSession,
   type BrowserSession,
 } from "@agent-browser/bridge";
+import { finishNotice, quitWarning, trayStatus, type QuitWarning } from "./background.ts";
 import { listModels, testModel } from "./model-probe.ts";
 import {
   activeProviderConfig,
@@ -30,6 +46,8 @@ import {
   lightRun,
   type AppState,
   type BrowserActionResult,
+  type GeneralSettings,
+  type GeneralSettingsView,
   type BrowserStatus,
   type ProfileItem,
   type ModelProbeRequest,
@@ -89,9 +107,18 @@ function extensionDir(): string {
  * @returns 图标文件的绝对路径
  */
 function appIconPath(): string {
-  const distIcon = path.join(__dirname, "icon.png");
-  if (existsSync(distIcon)) return distIcon;
-  return path.resolve(__dirname, "../assets/icon.png");
+  return assetPath("icon.png");
+}
+
+/**
+ * 定位随应用分发的图片素材：优先构建目录（dist/），开发时回退到源码 assets/。
+ *
+ * 【调用时机】取窗口图标、菜单栏（托盘）图标时调用。
+ */
+function assetPath(name: string): string {
+  const distFile = path.join(__dirname, name);
+  if (existsSync(distFile)) return distFile;
+  return path.resolve(__dirname, "../assets", name);
 }
 
 /** Electron 主窗口引用 */
@@ -108,6 +135,22 @@ let browserError: string | undefined;
 let taskRunner: TaskRunner;
 /** 全局定时调度器实例 */
 let scheduler: Scheduler;
+
+const isMac = process.platform === "darwin";
+/** 菜单栏（macOS）/ 系统托盘（Windows、Linux）图标 */
+let tray: Tray | null = null;
+/** 已经确认要退出（或者无需确认）；之后窗口的 close 不再拦截成「躲进后台」 */
+let allowQuit = false;
+/** 退出确认框是否正在显示，避免连按 ⌘Q 叠出多个 */
+let confirmingQuit = false;
+/** 正在关闭浏览器、等它关完再退出 */
+let closingBrowser = false;
+/** 系统正在关机 / 重启：不弹任何确认框挡住关机 */
+let systemShutdown = false;
+/** 系统通知必须保持引用，否则被回收后点击事件会丢 */
+const liveNotifications = new Set<Notification>();
+/** Windows 登录项带上这个参数，用来识别「开机自动启动」 */
+const HIDDEN_ARG = "--hidden";
 
 /** 内核下载安装的实时运行时状态（仅保留在内存中，不持久化） */
 interface KernelRuntime {
@@ -132,6 +175,8 @@ const kernelRuntime = new Map<string, KernelRuntime>();
  */
 function emit(e: UiEvent) {
   window?.webContents.send(IPC.event, e);
+  // Linux 的托盘菜单不能在点击时现做，只能跟着状态刷新
+  if (e.type === "state" && tray && process.platform === "linux") tray.setContextMenu(trayMenu());
 }
 
 /**
@@ -166,6 +211,8 @@ function state(): AppState {
   const activeRun = running ? lightRun(running) : undefined;
 
   return {
+    platform: process.platform,
+    general: generalView(),
     browser: browserStatus,
     ...(browserError ? { browserError } : {}),
     provider: view(settings, settings.provider),
@@ -190,6 +237,208 @@ function state(): AppState {
  * 调用 `state()` 生成全量快照，并发送 `type: "state"` 事件同步给前端界面。
  */
 const pushState = () => emit({ type: "state", state: state() });
+
+// ───────────────────────────── 后台常驻：通用设置、窗口、托盘、退出确认、系统通知 ─────────────────────────────
+
+/** 开机启动不可用的原因；可用时返回 undefined */
+function loginItemNote(): string | undefined {
+  if (process.platform === "linux") return "当前系统暂不支持";
+  if (!app.isPackaged) return "开发模式下不可用，打包安装后才能设置";
+  return undefined;
+}
+
+/** Windows 读写登录项时要带上同样的参数，才能对应到同一条登录项 */
+const loginItemQuery = () => (process.platform === "win32" ? { args: [HIDDEN_ARG] } : {});
+
+/**
+ * 组装发给界面的通用设置。
+ * 开机启动以系统登录项为准（用户可能在系统设置里手动关掉）。
+ */
+function generalView(): GeneralSettingsView {
+  const note = loginItemNote();
+  return {
+    keepInBackground: settings.general.keepInBackground,
+    notifyOnFinish: settings.general.notifyOnFinish,
+    quitWarn: settings.general.quitWarn,
+    openAtLogin: note ? false : app.getLoginItemSettings(loginItemQuery()).openAtLogin,
+    ...(note ? { loginItemNote: note } : {}),
+  };
+}
+
+/**
+ * 修改通用设置（「设置 › 通用」里的开关）。
+ *
+ * 【调用时机】渲染进程 IPC `settings:save-general`。
+ * 【作用】只改传进来的项：开机启动写进系统登录项，其余写进 settings.json。
+ */
+function saveGeneral(patch: Partial<GeneralSettings>) {
+  const g = settings.general;
+  if (typeof patch.keepInBackground === "boolean") g.keepInBackground = patch.keepInBackground;
+  if (typeof patch.notifyOnFinish === "boolean") g.notifyOnFinish = patch.notifyOnFinish;
+  if (typeof patch.quitWarn === "boolean") g.quitWarn = patch.quitWarn;
+  if (typeof patch.openAtLogin === "boolean") {
+    const note = loginItemNote();
+    if (note) throw new Error(`无法设置开机启动：${note}`);
+    app.setLoginItemSettings({ openAtLogin: patch.openAtLogin, ...loginItemQuery() });
+  }
+  saveSettings(settings);
+  pushState();
+}
+
+/** 托盘菜单与退出确认需要的「现在有什么在跑、接下来跑什么」 */
+const runContext = () => ({
+  tasks: loadTasks(),
+  ...(taskRunner?.getActiveRun() ? { runningName: taskRunner.getActiveRun()!.name } : {}),
+  queued: scheduler?.queued() ?? [],
+  now: Date.now(),
+});
+
+/**
+ * 把窗口拿到前台。
+ *
+ * 【调用时机】点托盘「打开」、点 Dock 图标、点系统通知、再次启动应用（第二个实例）时调用。
+ * 【作用】macOS 上先把 Dock 图标请回来；窗口不存在就新建，藏起来了就显示并聚焦。
+ */
+function showWindow() {
+  if (isMac) void app.dock?.show();
+  if (!window) {
+    createWindow();
+    return;
+  }
+  if (window.isMinimized()) window.restore();
+  window.show();
+  window.focus();
+}
+
+/**
+ * 关掉窗口时躲进后台：窗口只是藏起来，应用继续运行，定时任务照常执行。
+ *
+ * 【调用时机】开启「关闭窗口后留在后台」时，用户点红叉 / ⌘W，或在退出确认框里选「保持在后台」。
+ * 【作用】藏起窗口，macOS 上同时藏起 Dock 图标，只留菜单栏图标；第一次会发一条系统通知告诉用户应用还在。
+ */
+function hideToBackground() {
+  window?.hide();
+  if (isMac) app.dock?.hide();
+  if (!settings.general.closeHintShown) {
+    settings.general.closeHintShown = true;
+    saveSettings(settings);
+    notify({
+      title: `${app.getName()} 仍在后台运行`,
+      body: `定时任务会照常执行。点${isMac ? "菜单栏" : "任务栏托盘"}里的图标可以打开或退出。`,
+    });
+  }
+}
+
+/**
+ * 发一条系统通知。
+ *
+ * 【调用时机】任务跑完、第一次躲进后台时调用。
+ * 【作用】系统不支持通知时什么也不做；点击通知执行 onClick。通知对象在关闭/点击前一直保留引用。
+ */
+function notify(opts: { title: string; body: string }, onClick?: () => void) {
+  if (!Notification.isSupported()) return;
+  const n = new Notification({ ...opts, ...(isMac ? {} : { icon: appIconPath() }) });
+  liveNotifications.add(n);
+  const drop = () => liveNotifications.delete(n);
+  n.on("click", () => {
+    drop();
+    onClick?.();
+  });
+  n.on("close", drop);
+  n.show();
+}
+
+/**
+ * 打开窗口并跳到某次运行的详情。
+ *
+ * 【调用时机】用户点了「任务完成」系统通知。
+ */
+function openRun(runId: string) {
+  showWindow();
+  const send = () => emit({ type: "open_run", runId });
+  if (window?.webContents.isLoading()) window.webContents.once("did-finish-load", send);
+  else send();
+}
+
+/**
+ * 任务跑完时按设置发系统通知。
+ *
+ * 【调用时机】TaskRunner.onFinished。
+ * 【作用】用户自己停止的、关掉了通知开关的、正在看着这个窗口的（界面里已有轻提示）都不发。
+ */
+function notifyRunFinished(run: Parameters<typeof finishNotice>[0] & { id: string }, byUser: boolean) {
+  if (byUser || !settings.general.notifyOnFinish) return;
+  if (window?.isVisible() && window.isFocused()) return;
+  notify(finishNotice(run), () => openRun(run.id));
+}
+
+/** 托盘菜单：一行只读状态 + 打开 + 退出 */
+function trayMenu(): Menu {
+  return Menu.buildFromTemplate([
+    { label: trayStatus(runContext()), enabled: false },
+    { type: "separator" },
+    { label: `打开 ${app.getName()}`, click: showWindow },
+    { label: "退出", click: () => app.quit() },
+  ]);
+}
+
+/**
+ * 创建菜单栏（macOS）/ 系统托盘（Windows、Linux）图标。
+ *
+ * 【调用时机】应用启动时调用一次。
+ * 【作用】macOS 用单色模板图（跟随菜单栏明暗），点击弹出菜单；Windows 左键打开窗口、右键弹出菜单；
+ * Linux 只能预先挂菜单，所以每次状态变化时刷新（见 emit）。
+ */
+function createTray() {
+  const image = isMac
+    ? nativeImage.createFromPath(assetPath("trayTemplate.png"))
+    : nativeImage.createFromPath(appIconPath()).resize({ width: 16, height: 16 });
+  if (isMac) image.setTemplateImage(true);
+  tray = new Tray(image);
+  tray.setToolTip(app.getName());
+  if (process.platform === "linux") {
+    tray.setContextMenu(trayMenu());
+    return;
+  }
+  tray.on("click", () => (isMac ? tray?.popUpContextMenu(trayMenu()) : showWindow()));
+  tray.on("right-click", () => tray?.popUpContextMenu(trayMenu()));
+}
+
+/**
+ * 退出前确认。
+ *
+ * 【调用时机】before-quit 里 quitWarning 认为需要确认时调用。
+ * 【作用】窗口可见时以表单（sheet）形式挂在窗口上；默认按钮是「保持在后台 / 取消」，防止误按回车退出。
+ * 选「退出」才真正退出；勾了「不再提醒」就关掉设置里的「退出前提醒」。
+ */
+async function confirmQuit(warning: QuitWarning) {
+  confirmingQuit = true;
+  const keep = settings.general.keepInBackground;
+  const parent = window?.isVisible() ? window : undefined;
+  if (!parent && isMac) app.focus({ steal: true });
+  const options: Electron.MessageBoxOptions = {
+    type: "warning",
+    message: warning.message,
+    detail: warning.detail,
+    buttons: [keep ? "保持在后台" : "取消", "退出"],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+    ...(warning.canMute ? { checkboxLabel: "不再提醒" } : {}),
+  };
+  const result = await (parent ? dialog.showMessageBox(parent, options) : dialog.showMessageBox(options));
+  confirmingQuit = false;
+  if (result.response !== 1) {
+    if (keep) hideToBackground();
+    return;
+  }
+  if (warning.canMute && result.checkboxChecked) {
+    settings.general.quitWarn = false;
+    saveSettings(settings);
+  }
+  allowQuit = true;
+  app.quit();
+}
 
 /**
  * 根据当前配置与指定浏览器会话创建 Agent 实例。
@@ -402,6 +651,12 @@ function registerIpc() {
     applyUpdate(settings, update);
     saveSettings(settings);
     pushState();
+    return state();
+  });
+
+  // 通用设置：开关拨动即生效
+  ipcMain.handle(IPC.saveGeneral, (_e, patch: Partial<GeneralSettings>) => {
+    saveGeneral(patch ?? {});
     return state();
   });
 
@@ -693,10 +948,10 @@ function registerIpc() {
  * 【作用】
  * 创建并配置 Electron 主窗口：设置尺寸、最小限制、macOS 毛玻璃侧边栏（vibrancy）、红绿灯位置、隔离沙箱与预加载脚本，并加载渲染页面。
  */
-function createWindow() {
+function createWindow({ show = true }: { show?: boolean } = {}) {
   const iconPath = appIconPath();
-  const isMac = process.platform === "darwin";
   window = new BrowserWindow({
+    show,
     width: 1440,
     height: 920,
     minWidth: 1040,
@@ -721,11 +976,26 @@ function createWindow() {
   });
 
   window.loadFile(path.join(__dirname, "renderer", "index.html"));
+  // 关窗口（红叉 / ⌘W）：开启了后台常驻就只是藏起来；否则当作退出（会先走退出确认）
+  window.on("close", (event) => {
+    if (allowQuit) return;
+    event.preventDefault();
+    if (settings.general.keepInBackground) hideToBackground();
+    else app.quit();
+  });
   window.on("closed", () => (window = null));
 }
 
+// 只允许一个实例：应用常驻后台时再次打开它，应该把已有的窗口拿出来，而不是再起一个（否则会有两个调度器重复跑任务）
+const isPrimaryInstance = app.requestSingleInstanceLock();
+if (!isPrimaryInstance) app.exit(0);
+app.on("second-instance", () => {
+  if (settings) showWindow();
+});
+
 // Electron 启动主入口
 app.whenReady().then(() => {
+  if (!isPrimaryInstance) return;
   app.setName("Agent 任务台");
 
   // 自定义截图协议处理句柄：shot://run/<runId>/<file>
@@ -759,26 +1029,44 @@ app.whenReady().then(() => {
   taskRunner.onIdle = () => scheduler.pump();
   scheduler.start();
 
+  taskRunner.onFinished = (run, byUser) => notifyRunFinished(run, byUser);
+
   registerIpc();
-  createWindow();
+  createTray();
+
+  // 开机自动启动时不弹窗口，只在菜单栏 / 托盘里待命（窗口照常创建好，点通知或「打开」时立刻能用）
+  const atLogin = process.argv.includes(HIDDEN_ARG) || (isMac && app.getLoginItemSettings().wasOpenedAtLogin);
+  createWindow({ show: !atLogin });
+  if (atLogin && isMac) app.dock?.hide();
 });
 
-// macOS 习惯：关掉窗口不退出，应用留在后台，定时任务才能继续运行；⌘Q 才真正退出。
-// 其他系统上关窗口就是退出。
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
-});
+// 系统关机 / 重启：不弹退出确认，免得挡住关机（Windows 关机不会触发 before-quit，无需处理）
+app.whenReady().then(() => powerMonitor.on("shutdown", () => (systemShutdown = true)));
 
-// 窗口被关掉后，点 Dock 图标把它重新打开
+// 关窗口不会走到这里（close 事件里已拦截成「躲进后台」或「退出」）；窗口全关只会发生在退出过程中
+
+// 点 Dock 图标：把窗口拿出来
 app.on("activate", () => {
-  if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  if (settings) showWindow();
 });
 
-let quitting = false;
+// 真正退出（⌘Q、托盘「退出」、Dock 退出、未开启后台常驻时关窗口）
 app.on("before-quit", (event) => {
-  if (quitting || !browser) return;
-  event.preventDefault();
-  quitting = true;
+  if (!allowQuit) {
+    const warning = systemShutdown
+      ? null
+      : quitWarning({ ...runContext(), warnScheduled: settings?.general.quitWarn ?? false });
+    if (warning) {
+      event.preventDefault();
+      if (!confirmingQuit) void confirmQuit(warning);
+      return;
+    }
+    allowQuit = true;
+  }
+  // 先中断正在跑的任务、关掉浏览器，再退出
   taskRunner?.cancel();
+  if (closingBrowser || !browser) return;
+  event.preventDefault();
+  closingBrowser = true;
   void browser.close().finally(() => app.quit());
 });
