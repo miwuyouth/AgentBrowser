@@ -86,6 +86,10 @@ export class BrowserToolExecutor {
         return findElements(this.opts.bridge, this.opts.completeJson, input as { query: string; tabId: number }, signal);
       case "file_upload":
         return this.fileUpload(input as { paths: string[]; ref: string; tabId: number }, signal);
+      case "submit_result":
+        return {
+          content: [{ type: "text", text: "Structured form data has been recorded successfully." }],
+        };
       default:
         // 其余工具直接转发给 Chrome 扩展
         return this.opts.bridge.call(name, input, this.callOptions(signal));

@@ -12,6 +12,14 @@ export type TaskStatus = "ok" | "run" | "fail" | "none";
 /** 任务执行模式 */
 export type TaskMode = "now" | "cron";
 
+/** 表单字段定义 */
+export interface FormField {
+  id: string;
+  name: string;
+  type: "text" | "number";
+  description?: string;
+}
+
 /** 任务结构定义 */
 export interface TaskItem {
   id: string;
@@ -19,6 +27,8 @@ export interface TaskItem {
   goal: string;
   url?: string;
   doneCondition?: string;
+  /** 期望提取的表单字段 */
+  fields?: FormField[];
   /** 所选浏览器内核 ID */
   kernelId: string;
   /** 所选浏览器内核显示名称 */
@@ -58,8 +68,11 @@ export interface RunStep {
   screenshot?: string;
 }
 
-/** 一次运行的最终结果。目前只有文字；以后支持结构化数据时，在这里新增一个 kind 即可 */
-export type RunResult = { kind: "text"; text: string } | { kind: "markdown"; text: string };
+/** 一次运行的最终结果。支持文字、Markdown 与结构化表单 */
+export type RunResult =
+  | { kind: "text"; text: string }
+  | { kind: "markdown"; text: string }
+  | { kind: "form"; data: Record<string, string | number | null>; fields: FormField[] };
 
 /** 运行记录的摘要：列表用，不含步骤和截图，很小 */
 export interface RunSummary {

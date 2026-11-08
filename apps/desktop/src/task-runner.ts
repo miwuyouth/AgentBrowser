@@ -3,7 +3,8 @@ import type { BrowserSession } from "@agent-browser/bridge";
 import { randomBytes } from "node:crypto";
 import { formatProfileStamp, getRunStore, loadTasks, resolveOrCreateProfile, saveTasks } from "./storage.ts";
 import { DEFAULT_ADVICE, describeStop, describeTimeout, RunStopped } from "./run-stop.ts";
-import { errorMessage, type AppState, type RunRecord, type RunStep, type TaskItem, type UiEvent } from "./shared.ts";
+import { normalizeFormData, tryExtractJsonFallback } from "./form-extract.ts";
+import { errorMessage, type AppState, type FormField, type RunRecord, type RunStep, type TaskItem, type UiEvent } from "./shared.ts";
 
 /** 毫秒 → mm:ss */
 function formatElapsed(ms: number): string {
@@ -197,10 +198,24 @@ export class TaskRunner {
       this.activeRun.steps[0].meta = "已就绪";
     }
 
+    const hasFields = Boolean(task.fields && task.fields.length > 0);
+    const formPrompt = hasFields
+      ? [
+          "【表单提取要求】",
+          "本任务需要提取以下结构化表单字段：",
+          ...task.fields!.map(
+            (f) =>
+              `- 「${f.name}」（类型：${f.type === "number" ? "数字" : "文本"}${f.description ? `，要求：${f.description}` : ""}）`,
+          ),
+          '在从页面收集到信息后，必须调用 submit_result 工具提交提取的数据，参数格式：{"data": { "字段名": 字段值 }}。数字类型请填纯数字。完成提交后在最终回复中简要总结。',
+        ].join("\n")
+      : "";
+
     const prompt = [
       `任务目标：${task.goal}`,
       task.url ? `起始网址：${task.url}` : "",
       task.doneCondition ? `完成判定条件：${task.doneCondition}` : "",
+      formPrompt,
       task.resultFormat ? `结果格式要求：${task.resultFormat}` : "",
     ]
       .filter(Boolean)
@@ -222,10 +237,29 @@ export class TaskRunner {
           // 没有工具调用的那一轮就是最终回复。界面不显示思考过程和逐字输出，所以不再推送它们
           if (event.toolCalls.length === 0 && event.text.trim()) {
             this.activeRun.summary = event.text;
+            if (hasFields && !this.activeRun.result) {
+              const fallback = tryExtractJsonFallback(event.text, task.fields!);
+              if (fallback) {
+                this.activeRun.result = {
+                  kind: "form",
+                  data: fallback,
+                  fields: task.fields!,
+                };
+              }
+            }
             this.persistRun(false);
             this.emitEvent({ type: "run_update", run: this.activeRun });
           }
         } else if (event.type === "tool_call") {
+          if (event.name === "submit_result" && hasFields && event.input && typeof event.input === "object") {
+            const rawData = (event.input as { data?: unknown }).data ?? event.input;
+            const normalized = normalizeFormData(rawData, task.fields!);
+            this.activeRun.result = {
+              kind: "form",
+              data: normalized,
+              fields: task.fields!,
+            };
+          }
           const newStep: RunStep = {
             // 编号统一按当前步数 + 1，避免和「插话」步骤撞号（截图文件名也用它）
             stepNumber: this.activeRun.steps.length + 1,
@@ -312,6 +346,8 @@ export class TaskRunner {
         return "提取";
       case "browser_batch":
         return "批量";
+      case "submit_result":
+        return "表单";
       default:
         return "动作";
     }

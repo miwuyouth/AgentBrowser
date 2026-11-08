@@ -413,6 +413,21 @@ export const BROWSER_BATCH: ToolDefinition = {
   },
 };
 
+const SUBMIT_RESULT: ToolDefinition = {
+  name: "submit_result",
+  description: "Submit structured result (form fields or key-value data) extracted from pages as requested by the task.",
+  input_schema: {
+    type: "object",
+    properties: {
+      data: {
+        type: "object",
+        description: "Key-value dictionary containing the extracted field names and their values.",
+      },
+    },
+    required: ["data"],
+  },
+};
+
 /** 暴露给大模型的完整工具列表（顺序固定，便于 API 提示词缓存 Prompt Caching） */
 export const MODEL_TOOLS: readonly ToolDefinition[] = [
   TABS_CONTEXT,
@@ -432,6 +447,7 @@ export const MODEL_TOOLS: readonly ToolDefinition[] = [
   RESIZE_WINDOW,
   GIF_CREATOR,
   BROWSER_BATCH,
+  SUBMIT_RESULT,
 ];
 
 /** 工具名称字面量联合类型 */
@@ -452,7 +468,8 @@ export type ToolName =
   | "upload_image"
   | "resize_window"
   | "gif_creator"
-  | "browser_batch";
+  | "browser_batch"
+  | "submit_result";
 
 /**
  * 标记每个工具的执行位置：
@@ -478,6 +495,7 @@ export const TOOL_EXECUTOR: Record<ToolName, "extension" | "app" | "app+extensio
   resize_window: "extension",
   gif_creator: "extension",
   browser_batch: "app",
+  submit_result: "app",
 };
 
 /** 扩展内部支持的 DOM 候选元素搜索工具（供 App 端的 find 工具使用） */

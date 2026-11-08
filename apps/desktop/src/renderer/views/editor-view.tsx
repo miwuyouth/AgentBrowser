@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "preact/hooks";
-import { AUTO_PROFILE_LABEL, AUTO_PROFILE_VALUE, errorMessage, type AppState, type TaskItem } from "../../shared.ts";
+import { AUTO_PROFILE_LABEL, AUTO_PROFILE_VALUE, errorMessage, type AppState, type FormField, type TaskItem } from "../../shared.ts";
 import { Icon } from "../icons.tsx";
 import { PageHead } from "../page.tsx";
 import { nextSlot, scheduleLabel, type RepeatKind } from "../../schedule.ts";
@@ -70,6 +70,22 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
   const [advOpen, setAdvOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [fields, setFields] = useState<FormField[]>(task?.fields ?? []);
+
+  const addField = () => {
+    setFields((prev) => [
+      ...prev,
+      { id: `f-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, name: "", type: "text", description: "" },
+    ]);
+  };
+
+  const updateField = (id: string, patch: Partial<FormField>) => {
+    setFields((prev) => prev.map((f) => (f.id === id ? { ...f, ...patch } : f)));
+  };
+
+  const removeField = (id: string) => {
+    setFields((prev) => prev.filter((f) => f.id !== id));
+  };
 
   const goalRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
@@ -124,6 +140,9 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
         goal: goal.trim(),
         url: url.trim(),
         doneCondition: doneCondition.trim(),
+        fields: fields
+          .map((f) => ({ ...f, name: f.name.trim(), description: f.description?.trim() || undefined }))
+          .filter((f) => f.name !== ""),
         maxSteps: stepsValue!,
         timeoutMinutes: timeoutValue!,
         kernelId,
@@ -192,6 +211,68 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
               <input id="task-url" class="input" placeholder="https://" value={url} onInput={(e) => setUrl(e.currentTarget.value)} />
             </div>
           </div>
+        </div>
+
+        <div class="card form-builder-card">
+          <div class="form-builder-head">
+            <div>
+              <span class="form-builder-title">结果表单（可选）</span>
+              <p class="form-builder-desc">设置让 Agent 提取的字段，任务执行后将以结构化表单呈现</p>
+            </div>
+            <button type="button" class="btn btn-sm" onClick={addField}>
+              <Icon name="plus" size={12} />
+              添加字段
+            </button>
+          </div>
+
+          {fields.length === 0 ? (
+            <div class="form-builder-empty">
+              <span>默认返回纯文本总结。若需提取具体数据（如商品价格、状态等），可点击上方「添加字段」。</span>
+            </div>
+          ) : (
+            <div class="form-fields-list">
+              {fields.map((f, i) => (
+                <div key={f.id} class="form-field-row">
+                  <span class="form-field-num">{i + 1}</span>
+                  <div class="form-field-col name">
+                    <input
+                      class="input"
+                      placeholder="字段名称，例如：商品价格"
+                      value={f.name}
+                      onInput={(e) => updateField(f.id, { name: e.currentTarget.value })}
+                    />
+                  </div>
+                  <div class="form-field-col type">
+                    <Select
+                      id={`field-type-${f.id}`}
+                      value={f.type}
+                      onChange={(v) => updateField(f.id, { type: v as "text" | "number" })}
+                    >
+                      <option value="text">文本</option>
+                      <option value="number">数字</option>
+                    </Select>
+                  </div>
+                  <div class="form-field-col desc">
+                    <input
+                      class="input"
+                      placeholder="提取说明（可选，例如：包含单位或纯数字）"
+                      value={f.description ?? ""}
+                      onInput={(e) => updateField(f.id, { description: e.currentTarget.value })}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    class="icon-btn form-field-del"
+                    title="删除此字段"
+                    aria-label="删除此字段"
+                    onClick={() => removeField(f.id)}
+                  >
+                    <Icon name="trash" size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <div class={`advbox ${advOpen ? "open" : ""}`}>

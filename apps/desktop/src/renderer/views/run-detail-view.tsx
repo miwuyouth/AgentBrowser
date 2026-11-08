@@ -121,7 +121,7 @@ export function RunDetailView({ state, runId, go }: { state: AppState; runId: st
               {run.advice && <p class="result-advice">{run.advice}</p>}
             </>
           ) : result ? (
-            <ResultView result={result} />
+            <ResultView result={result} summary={run.summary} />
           ) : (
             <p class="muted">没有返回内容</p>
           )}

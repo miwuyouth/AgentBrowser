@@ -350,6 +350,26 @@ svg.icon {
 .result-advice { margin-top: 10px; color: var(--text-2); }
 .muted { color: var(--text-3); }
 
+/* 表单提取结果展示 (运行详情页) */
+.form-result { display: flex; flex-direction: column; gap: 4px; width: 100%; }
+.form-result-head { display: flex; align-items: center; justify-content: space-between; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.form-result-title { font-size: 13px; font-weight: 600; color: var(--text-2); }
+.form-result-table { display: flex; flex-direction: column; }
+.form-result-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.form-result-row:last-child { border-bottom: 0; }
+.form-result-label { display: flex; align-items: center; gap: 8px; flex: none; max-width: 45%; }
+.form-result-name { font-size: 13.5px; font-weight: 600; color: var(--text); }
+.form-result-badge { display: inline-block; padding: 1px 6px; border-radius: 4px; background: var(--active); font-size: 11px; color: var(--text-2); }
+.form-result-desc { font-size: 12px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.form-result-val-wrap { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex: 1; min-width: 0; }
+.form-result-val { font-size: 14px; font-weight: 500; color: var(--text); word-break: break-all; text-align: right; }
+.form-result-val.number { font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+.form-result-empty { font-size: 13px; color: var(--text-3); font-style: italic; }
+.form-result-copy { color: var(--text-3); flex: none; }
+.form-result-copy:hover { color: var(--text); background: var(--hover); }
+.form-result-summary { margin-top: 10px; padding: 12px 14px; border-radius: var(--radius); background: var(--bg); font-size: 13px; line-height: 1.6; color: var(--text-2); }
+.form-result-summary-title { font-weight: 600; color: var(--text); display: block; margin-bottom: 4px; }
+
 .fold { display: flex; align-items: center; gap: 8px; width: 100%; height: 48px; padding: 0 20px; border: 0; border-radius: var(--radius-lg); background: none; font-weight: 500; text-align: left; }
 .fold:hover { background: var(--hover); }
 .fold-icon { display: grid; color: var(--text-3); transition: transform 0.15s ease; }
@@ -378,6 +398,21 @@ svg.icon {
 .goal textarea::placeholder { color: var(--text-3); }
 .goal-extra { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding: 16px 24px 22px; }
 .goal-extra .full { grid-column: 1 / -1; }
+
+/* 任务编辑页：表单提取配置 */
+.form-builder-card { padding: 18px 22px; margin-top: 14px; }
+.form-builder-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+.form-builder-title { font-size: 13px; font-weight: 600; color: var(--text); }
+.form-builder-desc { margin-top: 3px; font-size: 12px; color: var(--text-3); }
+.form-builder-empty { padding: 18px 14px; border: 1px dashed var(--line-strong); border-radius: var(--radius); background: var(--bg); font-size: 12.5px; color: var(--text-3); text-align: center; }
+.form-fields-list { display: flex; flex-direction: column; gap: 10px; }
+.form-field-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); }
+.form-field-num { font-size: 12px; font-weight: 600; color: var(--text-3); width: 16px; text-align: center; flex: none; }
+.form-field-col.name { width: 180px; flex: none; }
+.form-field-col.type { width: 90px; flex: none; }
+.form-field-col.desc { flex: 1; min-width: 0; }
+.form-field-del { color: var(--text-3); flex: none; }
+.form-field-del:hover { color: var(--err); background: color-mix(in srgb, var(--err) 10%, transparent); }
 
 .advbox { margin-top: 14px; }
 .adv { display: flex; align-items: center; gap: 10px; width: 100%; padding: 14px 18px; border: 1px dashed var(--line-strong); border-radius: var(--radius); background: none; color: var(--text-2); text-align: left; }

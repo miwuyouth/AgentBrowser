@@ -311,6 +311,7 @@ function registerIpc() {
         goal: taskData.goal || "",
         url: taskData.url || "",
         doneCondition: taskData.doneCondition || "",
+        fields: taskData.fields,
         kernelId: kernel.id,
         kernel: kernel.name,
         autoProfile,
