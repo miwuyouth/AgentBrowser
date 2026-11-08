@@ -420,13 +420,19 @@ export function EditorView({ state, taskId, go }: { state: AppState; taskId: str
                 />
                 <p class="hint-text">运行超过这个时间会自动终止。</p>
               </div>
-              <div class="field">
-                <label>完成后关闭浏览器</label>
-                <button type="button" role="switch" aria-checked={autoClose} class={`switch ${autoClose ? "on" : ""}`} onClick={() => setAutoClose(!autoClose)}>
-                  <span>任务结束后自动关闭</span>
-                  <i />
-                </button>
-              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={autoClose}
+                class={`switch-row full ${autoClose ? "on" : ""}`}
+                onClick={() => setAutoClose(!autoClose)}
+              >
+                <span class="switch-row-text">
+                  <b>完成后关闭浏览器</b>
+                  <small>{autoClose ? "任务结束后自动关闭窗口" : "任务结束后保留窗口，方便查看现场"}</small>
+                </span>
+                <i class="switch-knob" />
+              </button>
             </div>
           )}
         </div>
