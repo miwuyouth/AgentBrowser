@@ -3,12 +3,12 @@ import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { getProvider, listManagedProviders } from "@agent-browser/bridge";
+import { RunStore } from "./run-store.ts";
 import { pickDefaultKernel, pickDefaultProfile, type DefaultsInput, type ProfileRef } from "./defaults.ts";
-import type { KernelItem, ProfileItem, RunRecord, TaskItem } from "./shared.ts";
+import type { KernelItem, ProfileItem, TaskItem } from "./shared.ts";
 
 const dataDir = () => path.join(app.getPath("userData"), "agent-desk-data");
 const tasksFile = () => path.join(dataDir(), "tasks.json");
-const runsFile = () => path.join(dataDir(), "runs.json");
 const profilesFile = () => path.join(dataDir(), "profiles.json");
 const defaultKernelFile = () => path.join(dataDir(), "default-kernel.txt");
 const defaultProfileFile = () => path.join(dataDir(), "default-profile.txt");
@@ -113,13 +113,11 @@ export function saveTasks(tasks: TaskItem[]) {
   writeJson(tasksFile(), tasks);
 }
 
-// Runs 存取
-export function loadRuns(): RunRecord[] {
-  return readJson<RunRecord[]>(runsFile(), []);
-}
-
-export function saveRuns(runs: RunRecord[]) {
-  writeJson(runsFile(), runs);
+// 运行记录：每次运行一个目录，截图是独立文件（见 run-store.ts）
+let runStore: RunStore | null = null;
+export function getRunStore(): RunStore {
+  runStore ??= new RunStore(path.join(dataDir(), "runs"));
+  return runStore;
 }
 
 // 默认 Profile 存取。全局只有一个默认 Profile，默认内核由它推出

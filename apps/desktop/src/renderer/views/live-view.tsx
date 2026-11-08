@@ -4,7 +4,19 @@ import { errorMessage } from "../../shared.ts";
 import { Icon } from "../icons.tsx";
 import { Lightbox } from "../lightbox.tsx";
 import type { Navigate } from "../sidebar.tsx";
+import { shotUrl } from "../shots.ts";
 import { describeStep, shortUrl, visibleSteps } from "../step-format.ts";
+import { formatClock } from "../time.ts";
+
+/** 每秒刷新一次的当前时间。用时在界面里自己算，后端不用每秒推一次 */
+function useNow(): number {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  return now;
+}
 
 function LiveStep({ step }: { step: RunStep }) {
   const { label, target } = describeStep(step);
@@ -21,6 +33,7 @@ function LiveStep({ step }: { step: RunStep }) {
 
 export function LiveView({ state, go }: { state: AppState; go: Navigate }) {
   const run = state.activeRun?.status === "run" ? state.activeRun : undefined;
+  const now = useNow();
 
   /** 看到过的那次运行；它结束时，自动带用户去看结果 */
   const seenRunId = useRef<string | null>(null);
@@ -76,8 +89,9 @@ export function LiveView({ state, go }: { state: AppState; go: Navigate }) {
     );
   }
 
-  const elapsed = run.facts.find((f) => f.k === "用时")?.v ?? "00:00";
-  const latestShot = [...run.steps].reverse().find((s) => s.screenshot)?.screenshot;
+  const elapsed = formatClock(now - run.startTime);
+  const latestFile = [...run.steps].reverse().find((s) => s.screenshot)?.screenshot;
+  const latestShot = latestFile ? shotUrl(run.id, latestFile) : undefined;
 
   const cancel = () => {
     setCancelling(true);

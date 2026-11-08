@@ -54,25 +54,27 @@ export interface RunStep {
   tag: string;
   text: string;
   meta: string;
-  think?: string;
+  /** 这一步的截图文件名（如 "3.png"）；文件存在该次运行的目录里，界面用 shot:// 地址读取 */
   screenshot?: string;
-  url?: string;
 }
 
 /** 一次运行的最终结果。目前只有文字；以后支持结构化数据时，在这里新增一个 kind 即可 */
 export type RunResult = { kind: "text"; text: string } | { kind: "markdown"; text: string };
 
-/** 单次运行记录结构 */
-export interface RunRecord {
+/** 运行记录的摘要：列表用，不含步骤和截图，很小 */
+export interface RunSummary {
   id: string;
   taskId?: string;
   name: string;
   status: "ok" | "run" | "fail";
-  when: string;
   startTime: number;
   endTime?: number;
   trigger: string;
-  facts: { k: string; v: string }[];
+}
+
+/** 单次运行的完整记录：详情页和重试用，需要时才读取 */
+export interface RunRecord extends RunSummary {
+  /** Agent 的最终回复；运行中为空 */
   summary: string;
   /** 结构化的最终结果；缺省时界面用 summary 兜底 */
   result?: RunResult;
@@ -158,7 +160,8 @@ export interface AppState {
   /** 因为已有任务在运行而排队等待的任务 ID，按先后顺序 */
   queued: string[];
   tasks: TaskItem[];
-  runs: RunRecord[];
+  /** 只有摘要；完整记录用 getRun 按需读取 */
+  runs: RunSummary[];
   kernels: KernelItem[];
   profiles: ProfileItem[];
   activeRun?: RunRecord;
@@ -205,6 +208,8 @@ export interface AgentApi {
   retryRun(runId: string): Promise<void>;
   /** 删除运行记录，返回实际删除的条数 */
   deleteRuns(ids: string[]): Promise<number>;
+  /** 读取一次运行的完整记录（含步骤） */
+  getRun(id: string): Promise<RunRecord | null>;
   cancelTask(): Promise<void>;
   createProfile(kernelId: string, name: string): Promise<ProfileItem>;
   saveProfile(profile: Partial<ProfileItem>): Promise<void>;
@@ -244,6 +249,7 @@ export const IPC = {
   interject: "agent:interject",
   retryRun: "runs:retry",
   deleteRuns: "runs:delete",
+  getRun: "runs:get",
   cancelTask: "agent:cancel-task",
   createProfile: "profiles:create",
   saveProfile: "profiles:save",

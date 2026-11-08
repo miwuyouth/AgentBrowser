@@ -1,4 +1,4 @@
-import type { AppState, RunRecord } from "../../shared.ts";
+import type { AppState, RunSummary } from "../../shared.ts";
 import { Icon } from "../icons.tsx";
 import { PageHead } from "../page.tsx";
 import type { Navigate } from "../sidebar.tsx";
@@ -6,7 +6,7 @@ import { formatRelative } from "../time.ts";
 
 const STATUS_LABEL = { ok: "成功", run: "运行中", fail: "失败" } as const;
 
-function RunRow({ run, go }: { run: RunRecord; go: Navigate }) {
+function RunRow({ run, go }: { run: RunSummary; go: Navigate }) {
   // 运行中的去实时视图看过程，已结束的去详情页看结果
   const open = () => go(run.status === "run" ? "live" : "run", run.id);
 

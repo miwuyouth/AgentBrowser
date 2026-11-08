@@ -1,5 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import type { AppState, RunRecord, RunStep } from "../../shared.ts";
+import { shotUrl } from "../shots.ts";
 import { Icon } from "../icons.tsx";
 import { PageHead } from "../page.tsx";
 import { Lightbox } from "../lightbox.tsx";
@@ -10,7 +11,7 @@ import { formatDateTime, formatDuration } from "../time.ts";
 
 const STATUS_LABEL = { ok: "成功", run: "运行中", fail: "失败" } as const;
 
-function StepRow({ step, onShot }: { step: RunStep; onShot: (src: string) => void }) {
+function StepRow({ runId, step, onShot }: { runId: string; step: RunStep; onShot: (src: string) => void }) {
   const { label, target } = describeStep(step);
   return (
     <li class="step-row">
@@ -21,7 +22,7 @@ function StepRow({ step, onShot }: { step: RunStep; onShot: (src: string) => voi
       </span>
       <span class="step-meta">{step.meta}</span>
       {step.screenshot && (
-        <button type="button" class="link-btn" onClick={() => onShot(step.screenshot!)}>
+        <button type="button" class="link-btn" onClick={() => onShot(shotUrl(runId, step.screenshot!))}>
           截图
         </button>
       )}
@@ -33,12 +34,23 @@ export function RunDetailView({ state, runId, go }: { state: AppState; runId: st
   const [stepsOpen, setStepsOpen] = useState(false);
   const [shot, setShot] = useState<string | null>(null);
 
-  const run: RunRecord | undefined = state.runs.find((r) => r.id === runId);
+  /** 列表里的摘要，随状态实时更新；完整记录（含步骤）按需单独读取，undefined 表示还在读取 */
+  const summary = state.runs.find((r) => r.id === runId);
+  const [run, setRun] = useState<RunRecord | null | undefined>(undefined);
+
+  useEffect(() => {
+    if (!runId) return setRun(null);
+    let alive = true;
+    void window.agentApi.getRun(runId).then((r) => alive && setRun(r));
+    return () => {
+      alive = false;
+    };
+  }, [runId, summary?.status]);
 
   // 还在运行的记录没有"结果"可看，去实时视图
   useEffect(() => {
-    if (run?.status === "run") go("live", run.id);
-  }, [run?.status]);
+    if (summary?.status === "run") go("live", summary.id);
+  }, [summary?.status]);
 
   const back = (
     <button type="button" class="back" onClick={() => go("runs")}>
@@ -46,6 +58,8 @@ export function RunDetailView({ state, runId, go }: { state: AppState; runId: st
       运行记录
     </button>
   );
+
+  if (run === undefined) return null; // 正在读取
 
   if (!run) {
     return (
@@ -126,7 +140,7 @@ export function RunDetailView({ state, runId, go }: { state: AppState; runId: st
           {stepsOpen && (
             <ul class="step-list">
               {steps.map((s) => (
-                <StepRow key={s.stepNumber} step={s} onShot={setShot} />
+                <StepRow key={s.stepNumber} runId={run.id} step={s} onShot={setShot} />
               ))}
             </ul>
           )}

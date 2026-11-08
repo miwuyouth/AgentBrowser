@@ -10,7 +10,7 @@
     "typecheck": "pnpm -r run typecheck",
     "cli": "pnpm --filter @agent-browser/agent run cli",
     "dev": "pnpm --filter @agent-browser/desktop run dev",
-    "test": "tsx apps/desktop/src/scheduler.test.ts && tsx apps/desktop/src/run-stop.test.ts && tsx apps/desktop/src/defaults.test.ts"
+    "test": "tsx apps/desktop/src/scheduler.test.ts && tsx apps/desktop/src/run-stop.test.ts && tsx apps/desktop/src/defaults.test.ts && tsx apps/desktop/src/run-store.test.ts"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",

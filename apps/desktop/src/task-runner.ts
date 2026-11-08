@@ -1,6 +1,7 @@
 import type { AgentSession } from "@agent-browser/agent";
 import type { BrowserSession } from "@agent-browser/bridge";
-import { formatProfileStamp, loadRuns, loadTasks, resolveOrCreateProfile, saveRuns, saveTasks } from "./storage.ts";
+import { randomBytes } from "node:crypto";
+import { formatProfileStamp, getRunStore, loadTasks, resolveOrCreateProfile, saveTasks } from "./storage.ts";
 import { DEFAULT_ADVICE, describeStop, describeTimeout, RunStopped } from "./run-stop.ts";
 import { errorMessage, type AppState, type RunRecord, type RunStep, type TaskItem, type UiEvent } from "./shared.ts";
 
@@ -12,12 +13,11 @@ function formatElapsed(ms: number): string {
 
 export class TaskRunner {
   private activeRun: RunRecord | null = null;
+  private currentAgent: AgentSession | null = null;
   private currentAbortController: AbortController | null = null;
   /** 任务超时计时器；超时后 timedOut 为 true，用来和用户主动终止区分开 */
   private deadline: ReturnType<typeof setTimeout> | null = null;
   private timedOut = false;
-  private currentAgent: AgentSession | null = null;
-  private timer: NodeJS.Timeout | null = null;
   private startTime = 0;
 
   constructor(
@@ -33,18 +33,18 @@ export class TaskRunner {
    * 启动时把它们收尾成「失败」，保留已经记下的步骤。
    */
   recoverInterruptedRuns() {
-    const runs = loadRuns();
-    let changed = false;
-    for (const r of runs) {
-      if (r.status !== "run") continue;
+    const store = getRunStore();
+    for (const summary of store.list()) {
+      if (summary.status !== "run") continue;
+      const r = store.get(summary.id);
+      if (!r) continue;
       r.status = "fail";
       r.hasError = true;
       r.error = "应用在任务执行过程中退出，这次运行被中断";
       r.advice = "已记录的步骤仍然保留。可以重新运行该任务。";
       r.endTime = r.endTime ?? Date.now();
-      changed = true;
+      store.save(r, { index: true });
     }
-    if (changed) saveRuns(runs);
 
     const tasks = loadTasks();
     let tasksChanged = false;
@@ -58,20 +58,11 @@ export class TaskRunner {
   }
 
   /**
-   * 把当前运行记录写入 runs.json（按 id 更新，没有就插到最前）。
-   * 中途保存不带截图（base64 很大，每步重写整个文件会越来越慢），结束时再带截图完整保存。
+   * 把当前运行记录写到它自己的文件。index 为真时同时更新列表索引（开始、结束时）；
+   * 运行中每一步只写这一个小文件，截图在产生时就已经存成独立文件。
    */
-  private persistRun(withScreenshots: boolean) {
-    const run = this.activeRun;
-    if (!run) return;
-    const snapshot: RunRecord = withScreenshots
-      ? run
-      : { ...run, steps: run.steps.map((st) => (st.screenshot ? { ...st, screenshot: undefined } : st)) };
-    const runs = loadRuns();
-    const idx = runs.findIndex((r) => r.id === run.id);
-    if (idx >= 0) runs[idx] = snapshot;
-    else runs.unshift(snapshot);
-    saveRuns(runs);
+  private persistRun(index: boolean) {
+    if (this.activeRun) getRunStore().save(this.activeRun, { index });
   }
 
   /** 一次运行彻底结束后调用（浏览器已按设置关闭）。调度器用它来启动排队的任务 */
@@ -119,7 +110,7 @@ export class TaskRunner {
     task.lastDuration = "进行中";
     saveTasks(tasks);
 
-    const runId = Math.floor(1000 + Math.random() * 9000).toString();
+    const runId = `run-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`;
     this.startTime = Date.now();
     this.currentAbortController = new AbortController();
     this.timedOut = false;
@@ -137,7 +128,6 @@ export class TaskRunner {
       tag: "启动",
       text: `启动「${kernel.name}」，加载对应 Profile「${profile.name}」`,
       meta: "进行中",
-      think: `开始执行任务：${task.name}。目标：${task.goal}。`,
     };
 
     this.activeRun = {
@@ -145,37 +135,15 @@ export class TaskRunner {
       taskId: task.id,
       name: task.name,
       status: "run",
-      when: "刚刚",
       startTime: this.startTime,
       trigger: triggerKind,
-      facts: [
-        { k: "步数", v: "1" },
-        { k: "用时", v: "00:01" },
-        { k: "内核", v: kernel.name },
-        { k: "Profile", v: profile.name },
-      ],
-      summary: `正在执行任务：${task.goal}`,
+      summary: "",
       steps: [initialStep],
     };
 
-    this.persistRun(false);
+    this.persistRun(true);
     this.emitEvent({ type: "run_update", run: this.activeRun });
     this.emitEvent({ type: "state", state: this.getAppState() });
-
-    this.timer = setInterval(() => {
-      if (!this.activeRun) return;
-      const timeStr = formatElapsed(Date.now() - this.startTime);
-
-      const fact = this.activeRun.facts.find((f) => f.k === "用时");
-      if (fact) fact.v = timeStr;
-
-      const lastStep = this.activeRun.steps[this.activeRun.steps.length - 1];
-      if (lastStep && lastStep.status === "run") {
-        lastStep.meta = `${timeStr} · 进行中`;
-      }
-
-      this.emitEvent({ type: "run_update", run: this.activeRun });
-    }, 1000);
 
     try {
       // 1. 拉起或连接任务指定的浏览器内核及对应 Profile
@@ -202,8 +170,6 @@ export class TaskRunner {
             : new RunStopped(errorMessage(err), DEFAULT_ADVICE);
       this.failTask(task, stop.message, stop.advice);
     } finally {
-      if (this.timer) clearInterval(this.timer);
-      this.timer = null;
       if (this.deadline) clearTimeout(this.deadline);
       this.deadline = null;
       this.activeRun = null;
@@ -247,7 +213,6 @@ export class TaskRunner {
       text: `用户补充指令：${trimmed}`,
       meta: "下一轮生效",
     });
-    this.updateFact("步数", String(this.activeRun.steps.length));
     this.persistRun(false);
     this.emitEvent({ type: "run_update", run: this.activeRun });
     return { ok: true, message: "已发送，Agent 将在下一步处理这条指令" };
@@ -260,9 +225,6 @@ export class TaskRunner {
       this.activeRun.steps[0].status = "done";
       this.activeRun.steps[0].meta = "已就绪";
     }
-
-    let stepCount = 1;
-    let accumulatedText = "";
 
     const prompt = [
       `任务目标：${task.goal}`,
@@ -295,29 +257,19 @@ export class TaskRunner {
         }
         if (!this.activeRun) return;
 
-        if (event.type === "thinking_delta") {
-          const curStep = this.activeRun.steps[this.activeRun.steps.length - 1];
-          if (curStep) {
-            curStep.think = (curStep.think || "") + event.text;
-            this.emitEvent({ type: "run_update", run: this.activeRun });
-          }
-        } else if (event.type === "text_delta") {
-          accumulatedText += event.text;
-          this.activeRun.summary = accumulatedText;
-          this.emitEvent({ type: "run_update", run: this.activeRun });
-        } else if (event.type === "assistant_turn") {
-          // 没有工具调用的那一轮就是最终回复：把它作为结果，覆盖流式拼接出来的中间话术
+        if (event.type === "assistant_turn") {
+          // 没有工具调用的那一轮就是最终回复。界面不显示思考过程和逐字输出，所以不再推送它们
           if (event.toolCalls.length === 0 && event.text.trim()) {
             this.activeRun.summary = event.text;
+            this.persistRun(false);
             this.emitEvent({ type: "run_update", run: this.activeRun });
           }
         } else if (event.type === "tool_call") {
-          stepCount++;
-          const tag = this.resolveToolTag(event.name);
           const newStep: RunStep = {
-            stepNumber: stepCount,
+            // 编号统一按当前步数 + 1，避免和「插话」步骤撞号（截图文件名也用它）
+            stepNumber: this.activeRun.steps.length + 1,
             status: "run",
-            tag,
+            tag: this.resolveToolTag(event.name),
             text: [event.name, this.summarizeArgs(event.input)].filter(Boolean).join("  "),
             meta: "进行中",
           };
@@ -325,7 +277,6 @@ export class TaskRunner {
           const navUrl = this.extractNavigateUrl(event.name, event.input);
           if (navUrl) this.activeRun.lastUrl = navUrl;
           this.activeRun.steps.push(newStep);
-          this.updateFact("步数", String(stepCount));
           this.persistRun(false);
           this.emitEvent({ type: "run_update", run: this.activeRun });
         } else if (event.type === "tool_result") {
@@ -334,8 +285,14 @@ export class TaskRunner {
             lastStep.status = event.result.isError ? "todo" : "done";
             lastStep.meta = `用时 ${event.durationMs}ms`;
             for (const item of event.result.content) {
+              // 截图直接存成文件，记录和消息里只带文件名，不再带着 base64 满处传
               if (item.type === "image") {
-                lastStep.screenshot = `data:${item.source.media_type};base64,${item.source.data}`;
+                lastStep.screenshot = getRunStore().saveShot(
+                  this.activeRun.id,
+                  lastStep.stepNumber,
+                  item.source.media_type,
+                  item.source.data,
+                );
               }
             }
             this.persistRun(false);
@@ -356,9 +313,6 @@ export class TaskRunner {
     this.activeRun.status = status;
     this.activeRun.endTime = Date.now();
     const durationStr = formatElapsed(this.activeRun.endTime - this.startTime);
-
-    this.updateFact("用时", durationStr);
-    this.updateFact("步数", String(this.activeRun.steps.length));
 
     this.persistRun(true);
 
@@ -384,12 +338,6 @@ export class TaskRunner {
     this.activeRun.summary = `任务执行失败：${errorMsg}`;
 
     this.finishTask(task, "fail");
-  }
-
-  private updateFact(key: string, value: string) {
-    if (!this.activeRun) return;
-    const f = this.activeRun.facts.find((fact) => fact.k === key);
-    if (f) f.v = value;
   }
 
   private resolveToolTag(name: string): string {

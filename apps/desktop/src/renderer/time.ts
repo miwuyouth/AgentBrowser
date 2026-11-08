@@ -45,3 +45,12 @@ export function formatUpcoming(ts: number, now = Date.now()): string {
   if (days < 7) return `${WEEKDAYS[d.getDay()]} ${clock}`;
   return `${d.getMonth() + 1}月${d.getDate()}日 ${clock}`;
 }
+
+/** 运行中的计时：03:12，超过一小时显示 1:03:12 */
+export function formatClock(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const sec = total % 60;
+  return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${pad(m)}:${pad(sec)}`;
+}

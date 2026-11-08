@@ -10,6 +10,7 @@ const api: AgentApi = {
   interject: (text) => ipcRenderer.invoke(IPC.interject, text),
   retryRun: (runId) => ipcRenderer.invoke(IPC.retryRun, runId),
   deleteRuns: (ids) => ipcRenderer.invoke(IPC.deleteRuns, ids),
+  getRun: (id) => ipcRenderer.invoke(IPC.getRun, id),
   cancelTask: () => ipcRenderer.invoke(IPC.cancelTask),
   createProfile: (kernelId, name) => ipcRenderer.invoke(IPC.createProfile, kernelId, name),
   saveProfile: (profile) => ipcRenderer.invoke(IPC.saveProfile, profile),

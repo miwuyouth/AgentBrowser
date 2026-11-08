@@ -1,6 +1,7 @@
-import { BrowserWindow, app, clipboard, dialog, ipcMain, nativeImage, nativeTheme, shell } from "electron";
+import { BrowserWindow, app, clipboard, dialog, ipcMain, nativeImage, nativeTheme, net, protocol, shell } from "electron";
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { AgentSession, createProvider } from "@agent-browser/agent";
 import {
   LicenseRequiredError,
@@ -38,18 +39,20 @@ import {
   getAppBrowserProfilesDir,
   getKernelsList,
   loadProfiles,
-  loadRuns,
+  getRunStore,
   loadTasks,
   removeProfileById,
   resolveKernelAndOptionalProfile,
   resolveKernelAndProfile,
   saveDefaultProfile,
-  saveRuns,
   saveTasks,
   updateProfileMeta,
 } from "./storage.ts";
 import { Scheduler } from "./scheduler.ts";
 import { TaskRunner } from "./task-runner.ts";
+
+// 截图以 shot://run/<运行ID>/<文件名> 的地址提供给界面，不再把 base64 塞进消息里。必须在 app ready 之前注册。
+protocol.registerSchemesAsPrivileged([{ scheme: "shot", privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 
 /** 获取浏览器扩展的构建产物目录 */
 function extensionDir(): string {
@@ -90,7 +93,7 @@ function emit(e: UiEvent) {
 /** 组装发送给渲染进程的当前应用状态 */
 function state(): AppState {
   const tasks = loadTasks();
-  const runs = loadRuns();
+  const runs = getRunStore().list();
   const kernels = getKernelsList().map((k) => {
     const rt = kernelRuntime.get(k.id);
     if (!rt) return k;
@@ -347,15 +350,13 @@ function registerIpc() {
     const activeId = taskRunner?.getActiveRun()?.id;
     const targets = new Set(Array.isArray(ids) ? ids.filter((x) => typeof x === "string" && x !== activeId) : []);
     if (targets.size === 0) return 0;
-    const runs = loadRuns();
-    const kept = runs.filter((r) => !targets.has(r.id));
-    const removed = runs.length - kept.length;
-    if (removed > 0) {
-      saveRuns(kept);
-      pushState();
-    }
+    const removed = getRunStore().remove([...targets]);
+    if (removed > 0) pushState();
     return removed;
   });
+
+  // 读取一次运行的完整记录（列表只带摘要，详情页按需来取）
+  ipcMain.handle(IPC.getRun, (_e, id: string) => getRunStore().get(typeof id === "string" ? id : ""));
 
   // 执行与停止任务
   ipcMain.handle(IPC.runTask, (_e, id: string) => {
@@ -368,8 +369,8 @@ function registerIpc() {
 
   // 从失败的运行记录重试：带上失败原因与最后页面继续
   ipcMain.handle(IPC.retryRun, (_e, runId: string) => {
-    const run = loadRuns().find((r) => r.id === runId && r.status !== "run");
-    if (!run) throw new Error(`未找到可重试的运行记录 #${runId}`);
+    const run = getRunStore().get(runId);
+    if (!run || run.status === "run") throw new Error(`未找到可重试的运行记录 #${runId}`);
     if (!run.taskId) throw new Error("这条运行记录没有关联的任务，无法重试。");
     taskRunner
       .runTask(run.taskId, "失败重试", run)
@@ -594,6 +595,12 @@ app.whenReady().then(() => {
       app.dock.setIcon(nativeImage.createFromPath(iconPath));
     } catch {}
   }
+
+  protocol.handle("shot", (request) => {
+    const [, runId = "", file = ""] = new URL(request.url).pathname.split("/");
+    const full = getRunStore().shotPath(runId, file);
+    return full ? net.fetch(pathToFileURL(full).toString()) : new Response("not found", { status: 404 });
+  });
 
   settings = loadSettings();
   initProviders({ kernelsDir: path.join(app.getPath("userData"), "kernels") });
