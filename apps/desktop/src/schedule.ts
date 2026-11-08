@@ -89,7 +89,7 @@ function dayHasSlot(kind: RepeatKind | undefined, day: Date): boolean {
  * 【作用】
  * 过滤非定时任务（如 manual、once 或 mode !== "cron"），避免无效计算。
  */
-const isScheduled = (rule: Rule) => rule.mode === "cron" && !!rule.repeatKind && rule.repeatKind !== "manual" && rule.repeatKind !== "once";
+export const isScheduled = (rule: Rule) => rule.mode === "cron" && !!rule.repeatKind && rule.repeatKind !== "manual" && rule.repeatKind !== "once";
 
 /**
  * 计算不晚于指定时间戳的最近一次计划触发时刻。

@@ -1,4 +1,5 @@
 import type { AppState, TaskItem } from "../../shared.ts";
+import { isScheduled, scheduleLabel } from "../../schedule.ts";
 import { Icon } from "../icons.tsx";
 import { getReadiness } from "../readiness.ts";
 import { PageHead } from "../page.tsx";
@@ -11,7 +12,7 @@ import type { Navigate } from "../sidebar.tsx";
  * 在 `TasksView` 任务列表中遍历渲染各个任务时调用。
  *
  * 【作用】
- * 1. 展示任务名称；
+ * 1. 展示任务名称，以及运行方式（「手动」或周期规则如「每天 08:30」）；
  * 2. 点击整行条目跳转该任务的编辑页面（`go("editor", task.id)`）；
  * 3. 右侧提供"运行"（若当前正在跑该任务则显示为"运行中"并支持直达 LiveView）按钮，处理并发互斥状态（`busy && !running` 时禁用）。
  *
@@ -32,6 +33,7 @@ function TaskRow({
   go: Navigate;
 }) {
   const open = () => go("editor", task.id);
+  const scheduled = isScheduled(task);
 
   return (
     <li
@@ -43,6 +45,15 @@ function TaskRow({
       onKeyDown={(e) => e.key === "Enter" && open()}
     >
       <span class="row-name">{task.name}</span>
+
+      {scheduled ? (
+        <span class="row-kind on" title="按周期自动运行">
+          <Icon name="repeat" size={12} />
+          {task.repeatTime ? scheduleLabel(task.repeatKind!, task.repeatTime) : task.schedule}
+        </span>
+      ) : (
+        <span class="row-kind">手动</span>
+      )}
 
       <button
         type="button"

@@ -354,6 +354,8 @@ svg.icon {
 .row + .row { border-top: 1px solid var(--line); }
 .row:hover, .row:focus-visible { background: var(--hover); }
 .row-name { flex: 1; min-width: 0; overflow: hidden; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.row-kind { display: inline-flex; flex: none; align-items: center; gap: 5px; color: var(--text-3); font-size: 12.5px; white-space: nowrap; }
+.row-kind.on { color: var(--text-2); }
 .row-meta { min-width: 56px; text-align: right; color: var(--text-2); }
 .row > svg.icon { color: var(--text-3); }
 
