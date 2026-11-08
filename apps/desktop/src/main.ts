@@ -721,6 +721,8 @@ function registerIpc() {
       taskData = newTask;
     }
     saveTasks(tasks);
+    // 记住这次选的 Profile，下次新建任务时默认预选它
+    if (!autoProfile && profile) saveDefaultProfile(profile.id);
     pushState();
     return taskData;
   });
@@ -843,13 +845,6 @@ function registerIpc() {
     } else {
       shell.openPath(path.dirname(cleanPath));
     }
-  });
-
-  // 浏览器内核 IPC
-  ipcMain.handle(IPC.setDefaultProfile, (_e, profileId: string) => {
-    if (!loadProfiles().some((p) => p.id === profileId)) throw new Error("找不到这个 Profile");
-    saveDefaultProfile(profileId);
-    pushState();
   });
 
   // 下载安装内核

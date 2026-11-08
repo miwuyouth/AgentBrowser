@@ -388,8 +388,6 @@ export interface AgentApi {
   releaseProfile(pid: number): Promise<{ ok: boolean; message: string }>;
   /** 在系统文件管理器中定位目标文件或目录 */
   showInFolder(targetPath: string): Promise<void>;
-  /** 设为全局默认 Profile */
-  setDefaultProfile(profileId: string): Promise<void>;
   /** 下载安装指定浏览器内核 */
   installKernel(kernelId: string): Promise<{ ok: boolean; message: string }>;
   /** 卸载指定浏览器内核 */
@@ -447,7 +445,6 @@ export const IPC = {
   openBrowser: "browser:open",
   testBrowser: "browser:test",
   showInFolder: "browser:show-in-folder",
-  setDefaultProfile: "profile:set-default",
   installKernel: "kernel:install",
   uninstallKernel: "kernel:uninstall",
   saveKernelLicense: "kernel:save-license",

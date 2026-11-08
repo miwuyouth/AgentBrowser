@@ -241,10 +241,10 @@ const loadDefaultProfileId = () => readTextFile(defaultProfileFile());
  * 保存全局默认 Profile ID 到本地磁盘。
  *
  * 【调用时机】
- * 用户在渲染界面点击设为默认 Profile 时（由 IPC `IPC.setDefaultProfile` 处理函数触发）调用。
+ * 保存任务时（由 IPC `IPC.saveTask` 处理函数触发）调用，记住用户最近一次选的 Profile。
  *
  * 【作用】
- * 将所选 Profile 的唯一 ID 写入 `default-profile.txt`。全局默认内核将随之自动切换为其归属的内核。
+ * 将所选 Profile 的唯一 ID 写入 `default-profile.txt`，新建任务时据此预选内核与 Profile。
  *
  * @param profileId 目标 Profile 的 ID
  */
@@ -372,7 +372,7 @@ interface StoredProfileRecord {
  *
  * 【调用时机】
  * 1. 组装全局 AppState（`state()`）时调用，向前端环境管理页与任务编辑下拉框提供 Profile 列表；
- * 2. 检查 Profile 是否存在、是否允许设为默认时调用。
+ * 2. 解析任务或启动浏览器时查找 Profile 时调用。
  *
  * 【作用】
  * 扫描内核目录与 `profiles.json`：

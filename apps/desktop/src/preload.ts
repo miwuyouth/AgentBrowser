@@ -126,12 +126,6 @@ const api: AgentApi = {
   showInFolder: (targetPath) => ipcRenderer.invoke(IPC.showInFolder, targetPath),
 
   /**
-   * 【调用时机】用户在 Profile 卡片上点击设为默认时调用。
-   * 【作用】通知主进程将该 Profile 持久化记录为全局默认，同时将默认内核随之切换。
-   */
-  setDefaultProfile: (profileId) => ipcRenderer.invoke(IPC.setDefaultProfile, profileId),
-
-  /**
    * 【调用时机】用户在内核管理卡片上点击"下载"按钮时调用。
    * 【作用】触发主进程调用对应 Provider 的下载与解压安装流程。
    */

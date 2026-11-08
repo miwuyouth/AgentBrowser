@@ -30,7 +30,7 @@ async function report(action: () => Promise<{ ok: boolean; message: string }>) {
  * 包装执行普通无返回值的异步操作，仅在发生异常时弹窗报错。
  *
  * 【调用时机】
- * 在删除 Profile、设为默认 Profile 等无需成功提示的 IPC 调用处触发。
+ * 在删除 Profile 等无需成功提示的 IPC 调用处触发。
  *
  * 【作用】
  * 尝试执行异步函数，若抛出异常则通过 toast 弹出红色错误提示。
@@ -55,11 +55,9 @@ async function attempt(action: () => Promise<unknown>) {
  *
  * 【作用】
  * 1. 展现 Profile 名称（双击或点击编辑图标支持内联行内重命名）；
- * 2. 标记是否为全局默认（默认 Profile 带有高亮徽章）；
- * 3. 展现该 Profile 真实占用的本地磁盘空间大小；
- * 4. 操作按钮组：
+ * 2. 展现该 Profile 真实占用的本地磁盘空间大小；
+ * 3. 操作按钮组：
  *    - "打开"：在独立窗口中拉起浏览器（供用户人工操作或登录网站），若被残留进程锁定则弹出释放引导；
- *    - "设为默认"：将此 Profile 持久化为全局默认（默认内核随之联动）；
  *    - "重命名"：进入行内编辑框修改名称；
  *    - "删除"：物理删除自定义 Profile（内置不可删除 Profile 不提供此按钮）。
  *
@@ -130,7 +128,6 @@ function ProfileRow({ profile: p, index, kernel, busy }: { profile: ProfileItem;
   const remove = () => {
     const parts = [`删除 Profile「${p.name}」？`];
     if (p.taskCount > 0) parts.push(`有 ${p.taskCount} 个任务指定了它，删除后会改用其他 Profile。`);
-    if (p.isDefault) parts.push("它是默认 Profile，删除后会自动换成另一个。");
     parts.push("它保存的网站登录状态会一并删除，无法恢复。");
     if (window.confirm(parts.join("\n"))) void attempt(() => window.agentApi.deleteProfile(p.id));
   };
@@ -156,10 +153,7 @@ function ProfileRow({ profile: p, index, kernel, busy }: { profile: ProfileItem;
             }}
           />
         ) : (
-          <div class="row-name">
-            {p.name}
-            {p.isDefault && <span class="badge">默认</span>}
-          </div>
+          <div class="row-name">{p.name}</div>
         )}
       </div>
 
@@ -168,11 +162,6 @@ function ProfileRow({ profile: p, index, kernel, busy }: { profile: ProfileItem;
           <Icon name="window" size={13} />
           打开
         </button>
-        {!p.isDefault && (
-          <button type="button" class="btn btn-sm" onClick={() => void attempt(() => window.agentApi.setDefaultProfile(p.id))}>
-            设为默认
-          </button>
-        )}
         <button type="button" class="icon-btn" aria-label="重命名" title="重命名" onClick={startRename}>
           <Icon name="edit" size={15} />
         </button>
@@ -368,7 +357,7 @@ function KernelCard({ kernel: k, profiles, busy, onNew }: { kernel: KernelItem; 
  * 统一管理任务执行所依托的底层浏览器内核与 Profile 登录身份环境：
  * 1. 列表呈现检测到的各浏览器内核卡片（Chromium、指纹型内核等）；
  * 2. 支持下载、重试、卸载内核；
- * 3. 在各内核下查看、打开、设为默认、重命名、删除或新建 Profile；
+ * 3. 在各内核下查看、打开、重命名、删除或新建 Profile；
  * 4. 控制新建 Profile 弹窗的开闭状态。
  *
  * @param state 当前全局应用状态
