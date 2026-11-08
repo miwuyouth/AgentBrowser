@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { getProvider, listManagedProviders } from "@agent-browser/bridge";
+import { pickDefaultKernel, pickDefaultProfile, type DefaultsInput, type ProfileRef } from "./defaults.ts";
 import type { KernelItem, ProfileItem, RunRecord, TaskItem } from "./shared.ts";
 
 const dataDir = () => path.join(app.getPath("userData"), "agent-desk-data");
@@ -10,6 +11,10 @@ const tasksFile = () => path.join(dataDir(), "tasks.json");
 const runsFile = () => path.join(dataDir(), "runs.json");
 const profilesFile = () => path.join(dataDir(), "profiles.json");
 const defaultKernelFile = () => path.join(dataDir(), "default-kernel.txt");
+const defaultProfileFile = () => path.join(dataDir(), "default-profile.txt");
+
+/** 每个内核自动带的那个 Profile 的名称（中性，不叫"默认"：默认是可以换的） */
+const BUILTIN_PROFILE_NAME = "主 Profile";
 
 function getAppBrowserDir() {
   return path.join(app.getPath("userData"), "browser");
@@ -81,7 +86,8 @@ function getFolderSize(dirPath: string): string {
 export function loadTasks(): TaskItem[] {
   const raw = readJson<TaskItem[]>(tasksFile(), []);
   const kernels = getKernelsListRaw();
-  const defaultKernel = kernels.find((k) => k.isDefault) || kernels[0];
+  const defaultKernelId = resolveDefaultKernelId(kernels, profileRefs(kernels));
+  const defaultKernel = kernels.find((k) => k.id === defaultKernelId) || kernels[0];
 
   return raw.map((t) => {
     const matchedKernel =
@@ -90,7 +96,7 @@ export function loadTasks(): TaskItem[] {
     const kernelName = matchedKernel?.name || t.kernel || "Chromium";
     const defaultProfileId = `${kernelId}::default`;
     const profileId = t.profileId && t.profileId.startsWith(`${kernelId}::`) ? t.profileId : defaultProfileId;
-    const profileName = t.profile || "默认 Profile";
+    const profileName = t.profile || BUILTIN_PROFILE_NAME;
 
     return {
       ...t,
@@ -116,23 +122,21 @@ export function saveRuns(runs: RunRecord[]) {
   writeJson(runsFile(), runs);
 }
 
-// Default Kernel 存取
-function loadDefaultKernel(): string {
+// 默认 Profile 存取。全局只有一个默认 Profile，默认内核由它推出
+function readTextFile(file: string): string {
   try {
-    if (existsSync(defaultKernelFile())) {
-      return readFileSync(defaultKernelFile(), "utf8").trim();
-    }
+    if (existsSync(file)) return readFileSync(file, "utf8").trim();
   } catch {}
   return "";
 }
 
-export function saveDefaultKernel(kernelId: string) {
+/** 旧版本保存的是「默认内核」；只在还没有默认 Profile 时用来迁移 */
+const loadLegacyDefaultKernel = () => readTextFile(defaultKernelFile());
+const loadDefaultProfileId = () => readTextFile(defaultProfileFile());
+
+export function saveDefaultProfile(profileId: string) {
   ensureDir();
-  try {
-    writeFileSync(defaultKernelFile(), kernelId.trim(), "utf8");
-  } catch (err) {
-    console.error("Failed to write default kernel:", err);
-  }
+  writeFileSync(defaultProfileFile(), profileId.trim(), "utf8");
 }
 
 /** 内部使用的内核条目：每个由 App 管理的 provider 对应一个内核，是否已下载安装由 provider 自己判断 */
@@ -146,11 +150,10 @@ interface KernelRaw {
   needsLicense: boolean;
   licenseMissing: boolean;
   claimUrl?: string;
-  isDefault: boolean;
 }
 
 function getKernelsListRaw(): KernelRaw[] {
-  const all = listManagedProviders().map((p): Omit<KernelRaw, "isDefault"> => {
+  return listManagedProviders().map((p): KernelRaw => {
     const k = p.installed();
     return {
       id: p.id,
@@ -164,40 +167,51 @@ function getKernelsListRaw(): KernelRaw[] {
       ...(p.license ? { claimUrl: p.license.claimUrl } : {}),
     };
   });
-  // 默认内核：用户保存的选择；否则第一个已安装的；都没装则第一个
-  const saved = loadDefaultKernel();
-  const defaultId = all.find((k) => k.id === saved)?.id ?? all.find((k) => k.installed)?.id ?? all[0]?.id;
-  return all.map((k) => ({ ...k, isDefault: k.id === defaultId }));
 }
+
+/** 所有 Profile 的 id 与所属内核，按内核顺序排；不读磁盘大小，所以可以随便调用 */
+function profileRefs(kernels: KernelRaw[]): ProfileRef[] {
+  const stored = readJson<StoredProfileRecord[]>(profilesFile(), []);
+  const refs: ProfileRef[] = [];
+  for (const k of kernels) {
+    const builtinId = `${k.id}::default`;
+    // 指纹型内核不自动带 Profile：每个 Profile 都有自己的指纹，必须由用户显式新建
+    if (!getProvider(k.providerId).capabilities.fingerprint) refs.push({ id: builtinId, kernelId: k.id });
+    for (const rec of stored) {
+      if (rec.kernelId === k.id && !rec.isDefault && rec.id !== builtinId) refs.push({ id: rec.id, kernelId: k.id });
+    }
+  }
+  return refs;
+}
+
+function defaultsInput(kernels: KernelRaw[], refs: ProfileRef[]): DefaultsInput {
+  return { kernels, refs, savedProfile: loadDefaultProfileId(), legacyKernel: loadLegacyDefaultKernel() };
+}
+const resolveDefaultProfileId = (kernels: KernelRaw[], refs: ProfileRef[]) => pickDefaultProfile(defaultsInput(kernels, refs));
+const resolveDefaultKernelId = (kernels: KernelRaw[], refs: ProfileRef[]) => pickDefaultKernel(defaultsInput(kernels, refs));
 
 /**
  * 组装真实的 Chromium 内核列表
  */
 export function getKernelsList(): KernelItem[] {
   const detected = getKernelsListRaw();
+  const defaultId = resolveDefaultKernelId(detected, profileRefs(detected));
   const tasks = readJson<TaskItem[]>(tasksFile(), []);
 
-  return detected.map((b) => {
-    const usageCount = tasks.filter(
-      (t) => t.kernelId === b.id || t.kernel === b.name || t.kernel === b.id,
-    ).length;
-    const usage = !b.installed ? "" : usageCount > 0 ? `${usageCount} 个任务在用` : "就绪";
-
-    return {
-      id: b.id,
-      providerId: b.providerId,
-      name: b.name,
-      installed: b.installed,
-      ver: b.installed ? (b.version ? `v${b.version}` : "已安装") : "未安装",
-      source: "App 管理",
-      path: b.path,
-      needsLicense: b.needsLicense,
-      licenseMissing: b.licenseMissing,
-      ...(b.claimUrl ? { claimUrl: b.claimUrl } : {}),
-      usage,
-      isDefault: b.isDefault,
-    };
-  });
+  return detected.map((b) => ({
+    id: b.id,
+    providerId: b.providerId,
+    name: b.name,
+    installed: b.installed,
+    ver: b.installed ? (b.version ? `v${b.version}` : "已安装") : "未安装",
+    source: "App 管理",
+    path: b.path,
+    needsLicense: b.needsLicense,
+    licenseMissing: b.licenseMissing,
+    ...(b.claimUrl ? { claimUrl: b.claimUrl } : {}),
+    taskCount: tasks.filter((t) => t.kernelId === b.id || t.kernel === b.name || t.kernel === b.id).length,
+    isDefault: b.id === defaultId,
+  }));
 }
 
 interface StoredProfileRecord {
@@ -213,8 +227,8 @@ interface StoredProfileRecord {
 }
 
 /**
- * 加载所有浏览器内核对应的 Profile 列表。
- * 每个检测到的浏览器内核默认拥有一个「默认 Profile」，用户也可在任意内核下创建多个专属 Profile。
+ * 加载所有 Profile。每个普通内核自带一个内置 Profile（不能删除），用户可在任意内核下新建更多。
+ * 全局只有一个默认 Profile（isDefault），默认内核就是它所在的内核。
  */
 export function loadProfiles(): ProfileItem[] {
   ensureDir();
@@ -222,6 +236,7 @@ export function loadProfiles(): ProfileItem[] {
   const kernels = getKernelsListRaw();
   const tasks = loadTasks();
   const stored = readJson<StoredProfileRecord[]>(profilesFile(), []);
+  const defaultId = resolveDefaultProfileId(kernels, profileRefs(kernels));
 
   const result: ProfileItem[] = [];
 
@@ -231,43 +246,42 @@ export function loadProfiles(): ProfileItem[] {
       mkdirSync(kernelProfileRoot, { recursive: true });
     }
 
-    // 指纹型内核不自动创建默认 Profile：每个 Profile 都有自己的指纹，必须由用户显式新建
+    // 指纹型内核不自动创建内置 Profile：每个 Profile 都有自己的指纹，必须由用户显式新建
     const fingerprintKernel = getProvider(k.providerId).capabilities.fingerprint;
 
-    // 1. 每个普通内核必有对应的默认 Profile
-    const defaultId = `${k.id}::default`;
+    // 1. 每个普通内核必有对应的内置 Profile
+    const builtinId = `${k.id}::default`;
     if (!fingerprintKernel) {
-      const defaultRecord = stored.find((s) => s.id === defaultId);
-      const defaultDir = path.join(kernelProfileRoot, "default");
-      if (!existsSync(defaultDir)) {
-        mkdirSync(defaultDir, { recursive: true });
+      const builtinRecord = stored.find((s) => s.id === builtinId);
+      const builtinDir = path.join(kernelProfileRoot, "default");
+      if (!existsSync(builtinDir)) {
+        mkdirSync(builtinDir, { recursive: true });
       }
 
-      const defaultName = defaultRecord?.name || "默认 Profile";
-      const defaultUsageCount = tasks.filter((t) => t.kernelId === k.id && t.profileId === defaultId).length;
+      const builtinName = builtinRecord?.name || BUILTIN_PROFILE_NAME;
       result.push({
-        id: defaultId,
-        name: defaultName,
-        initial: defaultName.slice(0, 1).toUpperCase(),
+        id: builtinId,
+        name: builtinName,
+        initial: builtinName.slice(0, 1).toUpperCase(),
         kernelId: k.id,
         kernel: k.name,
         providerId: k.providerId,
-        isDefault: true,
-        usage: defaultUsageCount > 0 ? `${defaultUsageCount} 个任务在用` : "未使用",
-        size: getFolderSize(defaultDir),
-        dir: defaultDir,
+        builtin: true,
+        isDefault: builtinId === defaultId,
+        taskCount: tasks.filter((t) => t.kernelId === k.id && t.profileId === builtinId).length,
+        size: getFolderSize(builtinDir),
+        dir: builtinDir,
       });
     }
 
     // 2. 该内核下用户创建的自定义 Profile
-    const customRecords = stored.filter((s) => s.kernelId === k.id && !s.isDefault && s.id !== defaultId);
+    const customRecords = stored.filter((s) => s.kernelId === k.id && !s.isDefault && s.id !== builtinId);
     for (const rec of customRecords) {
       const dirName = rec.dirName || rec.id.split("::")[1] || rec.id;
       const customDir = path.join(kernelProfileRoot, dirName);
       if (!existsSync(customDir)) {
         mkdirSync(customDir, { recursive: true });
       }
-      const usageCount = tasks.filter((t) => t.profileId === rec.id).length;
       result.push({
         id: rec.id,
         name: rec.name,
@@ -276,8 +290,8 @@ export function loadProfiles(): ProfileItem[] {
         kernel: k.name,
         providerId: rec.providerId ?? k.providerId,
         ...(rec.fingerprint ? { fingerprint: rec.fingerprint } : {}),
-        isDefault: false,
-        usage: usageCount > 0 ? `${usageCount} 个任务在用` : "未使用",
+        isDefault: rec.id === defaultId,
+        taskCount: tasks.filter((t) => t.profileId === rec.id).length,
         size: getFolderSize(customDir),
         dir: customDir,
       });
@@ -349,7 +363,7 @@ export async function createProfileForKernel(kernelId: string, name: string): Pr
     providerId: provider.id,
     ...(spec.fingerprint ? { fingerprint: spec.fingerprint } : {}),
     isDefault: false,
-    usage: "未使用",
+    taskCount: 0,
     size: getFolderSize(dir),
     dir,
   };
@@ -373,7 +387,7 @@ export function updateProfileMeta(profileData: Partial<ProfileItem>) {
   } else if (kernelIdFromId && dirNameFromId) {
     stored.push({
       id: profileData.id,
-      name: profileData.name?.trim() || "默认 Profile",
+      name: profileData.name?.trim() || BUILTIN_PROFILE_NAME,
       kernelId: kernelIdFromId,
       dirName: dirNameFromId,
       isDefault: dirNameFromId === "default",
@@ -387,7 +401,7 @@ export function updateProfileMeta(profileData: Partial<ProfileItem>) {
  */
 export function removeProfileById(id: string) {
   if (id.endsWith("::default")) {
-    throw new Error("内核的默认 Profile 不可删除");
+    throw new Error("内置 Profile 不能删除");
   }
   const all = loadProfiles();
   const target = all.find((p) => p.id === id);

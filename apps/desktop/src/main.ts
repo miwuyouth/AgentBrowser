@@ -43,7 +43,7 @@ import {
   removeProfileById,
   resolveKernelAndOptionalProfile,
   resolveKernelAndProfile,
-  saveDefaultKernel,
+  saveDefaultProfile,
   saveRuns,
   saveTasks,
   updateProfileMeta,
@@ -461,8 +461,9 @@ function registerIpc() {
   });
 
   // 浏览器内核 IPC
-  ipcMain.handle(IPC.setDefaultKernel, (_e, kernelId: string) => {
-    saveDefaultKernel(kernelId);
+  ipcMain.handle(IPC.setDefaultProfile, (_e, profileId: string) => {
+    if (!loadProfiles().some((p) => p.id === profileId)) throw new Error("找不到这个 Profile");
+    saveDefaultProfile(profileId);
     pushState();
   });
 

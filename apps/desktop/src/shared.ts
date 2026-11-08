@@ -108,7 +108,9 @@ export interface KernelItem {
   ver: string;
   source: string;
   path: string;
-  usage: string;
+  /** 有多少个任务在用这个内核 */
+  taskCount: number;
+  /** 是否默认内核：不单独设置，就是默认 Profile 所在的内核 */
   isDefault?: boolean;
 }
 
@@ -125,9 +127,12 @@ export interface ProfileItem {
   providerId: string;
   /** 指纹配置（仅指纹型浏览器有，内容由对应 provider 解释，例如 CloakBrowser 的 seed） */
   fingerprint?: Record<string, unknown>;
-  /** 是否为该内核的默认 Profile */
+  /** 是否为全局默认 Profile（全局只有一个） */
   isDefault?: boolean;
-  usage: string;
+  /** 内核自带的内置 Profile，不能删除 */
+  builtin?: boolean;
+  /** 有多少个任务指定了这个 Profile */
+  taskCount: number;
   size: string;
   dir: string;
 }
@@ -209,7 +214,8 @@ export interface AgentApi {
   /** 关闭占用某个 Profile 数据目录的残留浏览器进程 */
   releaseProfile(pid: number): Promise<{ ok: boolean; message: string }>;
   showInFolder(targetPath: string): Promise<void>;
-  setDefaultKernel(kernelId: string): Promise<void>;
+  /** 设为默认 Profile；默认内核随之变为它所在的内核 */
+  setDefaultProfile(profileId: string): Promise<void>;
   installKernel(kernelId: string): Promise<{ ok: boolean; message: string }>;
   uninstallKernel(kernelId: string): Promise<{ ok: boolean; message: string }>;
   saveKernelLicense(kernelId: string, key: string): Promise<{ ok: boolean; message: string }>;
@@ -246,7 +252,7 @@ export const IPC = {
   openBrowser: "browser:open",
   testBrowser: "browser:test",
   showInFolder: "browser:show-in-folder",
-  setDefaultKernel: "kernel:set-default",
+  setDefaultProfile: "profile:set-default",
   installKernel: "kernel:install",
   uninstallKernel: "kernel:uninstall",
   saveKernelLicense: "kernel:save-license",

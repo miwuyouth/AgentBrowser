@@ -132,11 +132,11 @@ export function Onboarding({ state, onDone }: { state: AppState; onDone: () => v
     void window.agentApi.installKernel(r.downloadTarget.id);
   }, [r.downloadTarget?.id, r.kernelStatus]);
 
-  // 个别内核（如指纹浏览器）不会自动带默认 Profile，这里补建一个
+  // 个别内核（如指纹浏览器）不会自带 Profile，这里补建一个
   useEffect(() => {
     if (!r.kernel || r.profile || profileStarted.current) return;
     profileStarted.current = true;
-    void window.agentApi.createProfile(r.kernel.id, "默认 Profile");
+    void window.agentApi.createProfile(r.kernel.id, "主 Profile");
   }, [r.kernel?.id, r.profile]);
 
   const target = r.downloadTarget;
