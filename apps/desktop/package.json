@@ -13,7 +13,10 @@
   "dependencies": {
     "@agent-browser/agent": "workspace:*",
     "@agent-browser/bridge": "workspace:*",
-    "@agent-browser/protocol": "workspace:*"
+    "@agent-browser/protocol": "workspace:*",
+    "cloakbrowser": "^0.7.1",
+    "playwright-core": "^1.65.0",
+    "preact": "^11.2.0"
   },
   "devDependencies": {
     "electron": "^45.2.3"

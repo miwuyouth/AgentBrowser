@@ -56,6 +56,8 @@ export class AgentSession {
   private readonly executor: BrowserToolExecutor;
   private readonly maxSteps: number;
   private running = false;
+  /** 用户在运行中插入的补充指令，下一轮模型推断前写入对话历史 */
+  private pendingInterjections: string[] = [];
 
   constructor(opts: AgentOptions) {
     this.provider =
@@ -100,6 +102,18 @@ export class AgentSession {
   }
 
   /**
+   * 任务运行中插入一条用户补充指令（Operator 式「插话」）：
+   * 不打断当前正在执行的工具；指令在下一轮模型推断之前写入对话历史，
+   * 模型看到后可据此调整后续做法。仅在会话运行期间有效。
+   */
+  inject(text: string): void {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    if (!this.running) throw new Error("The agent is not running; use send() instead.");
+    this.pendingInterjections.push(trimmed);
+  }
+
+  /**
    * Agent 核心循环：
    * 大模型推断 -> 解析工具调用 -> 执行工具 -> 工具结果写入历史 -> 继续推断
    */
@@ -110,6 +124,15 @@ export class AgentSession {
     };
     for (let step = 0; step < this.maxSteps; step++) {
       if (signal?.aborted) return onEvent({ type: "done", reason: "cancelled" });
+
+      // 用户在运行中插入的补充指令：在工具结果之后、下一轮推断之前写入历史。
+      // 此时历史末尾是工具结果（user 消息），追加用户文本后由各 Provider 负责规范化
+      // （Anthropic 合并到末尾用户消息，OpenAI 允许连续 user 消息），保证上下文合法。
+      if (this.pendingInterjections.length > 0) {
+        const joined = this.pendingInterjections.join("\n\n");
+        this.pendingInterjections = [];
+        this.conversation.addUserText(`[User interjection during the task]\n${joined}`);
+      }
 
       let turn;
       try {

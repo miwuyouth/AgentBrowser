@@ -1,7 +1,8 @@
 import { app } from "electron";
+import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { detectInstalledBrowsers } from "@agent-browser/bridge";
+import { getProvider, listManagedProviders } from "@agent-browser/bridge";
 import type { KernelItem, ProfileItem, RunRecord, TaskItem } from "./shared.ts";
 
 const dataDir = () => path.join(app.getPath("userData"), "agent-desk-data");
@@ -14,7 +15,7 @@ function getAppBrowserDir() {
   return path.join(app.getPath("userData"), "browser");
 }
 
-function getAppBrowserProfilesDir() {
+export function getAppBrowserProfilesDir() {
   return path.join(getAppBrowserDir(), "profiles");
 }
 
@@ -85,7 +86,7 @@ export function loadTasks(): TaskItem[] {
   return raw.map((t) => {
     const matchedKernel =
       kernels.find((k) => k.id === t.kernelId || k.id === t.kernel || k.name === t.kernel) || defaultKernel;
-    const kernelId = matchedKernel?.id || t.kernelId || "google-chrome";
+    const kernelId = matchedKernel?.id || t.kernelId || "chromium";
     const kernelName = matchedKernel?.name || t.kernel || "Chromium";
     const defaultProfileId = `${kernelId}::default`;
     const profileId = t.profileId && t.profileId.startsWith(`${kernelId}::`) ? t.profileId : defaultProfileId;
@@ -134,14 +135,39 @@ export function saveDefaultKernel(kernelId: string) {
   }
 }
 
-function getKernelsListRaw() {
-  const detected = detectInstalledBrowsers();
-  const defaultKernel = loadDefaultKernel();
-  const hasMatchedDefault = detected.some((b) => b.id === defaultKernel);
-  return detected.map((b, idx) => ({
-    ...b,
-    isDefault: hasMatchedDefault ? b.id === defaultKernel : idx === 0,
-  }));
+/** 内部使用的内核条目：每个由 App 管理的 provider 对应一个内核，是否已下载安装由 provider 自己判断 */
+interface KernelRaw {
+  id: string;
+  providerId: string;
+  name: string;
+  path: string;
+  version?: string;
+  installed: boolean;
+  needsLicense: boolean;
+  licenseMissing: boolean;
+  claimUrl?: string;
+  isDefault: boolean;
+}
+
+function getKernelsListRaw(): KernelRaw[] {
+  const all = listManagedProviders().map((p): Omit<KernelRaw, "isDefault"> => {
+    const k = p.installed();
+    return {
+      id: p.id,
+      providerId: p.id,
+      name: p.label,
+      path: k?.path ?? "",
+      ...(k?.version ? { version: k.version } : {}),
+      installed: !!k,
+      needsLicense: !!p.license,
+      licenseMissing: !!p.license && !p.license.hasKey(),
+      ...(p.license ? { claimUrl: p.license.claimUrl } : {}),
+    };
+  });
+  // 默认内核：用户保存的选择；否则第一个已安装的；都没装则第一个
+  const saved = loadDefaultKernel();
+  const defaultId = all.find((k) => k.id === saved)?.id ?? all.find((k) => k.installed)?.id ?? all[0]?.id;
+  return all.map((k) => ({ ...k, isDefault: k.id === defaultId }));
 }
 
 /**
@@ -155,16 +181,19 @@ export function getKernelsList(): KernelItem[] {
     const usageCount = tasks.filter(
       (t) => t.kernelId === b.id || t.kernel === b.name || t.kernel === b.id,
     ).length;
-    const usage = usageCount > 0 ? `${usageCount} 个任务在用` : "就绪";
+    const usage = !b.installed ? "" : usageCount > 0 ? `${usageCount} 个任务在用` : "就绪";
 
     return {
       id: b.id,
+      providerId: b.providerId,
       name: b.name,
-      ver: b.version ? `v${b.version}` : "已安装",
-      source: "系统检测",
+      installed: b.installed,
+      ver: b.installed ? (b.version ? `v${b.version}` : "已安装") : "未安装",
+      source: "App 管理",
       path: b.path,
-      health: "可用",
-      ok: true,
+      needsLicense: b.needsLicense,
+      licenseMissing: b.licenseMissing,
+      ...(b.claimUrl ? { claimUrl: b.claimUrl } : {}),
       usage,
       isDefault: b.isDefault,
     };
@@ -174,13 +203,14 @@ export function getKernelsList(): KernelItem[] {
 interface StoredProfileRecord {
   id: string;
   name: string;
-  hue?: string;
   kernelId: string;
+  /** 负责该 Profile 的 provider；旧记录没有此字段，按所属内核推断 */
+  providerId?: string;
+  /** 指纹配置，由 provider 在创建 Profile 时生成 */
+  fingerprint?: Record<string, unknown>;
   dirName: string;
   isDefault?: boolean;
 }
-
-const PROFILE_COLORS = ["#6AA2FF", "#5FD0C0", "#B79CFF", "#E9A93E", "#F2766B", "#A0A7B0"];
 
 /**
  * 加载所有浏览器内核对应的 Profile 列表。
@@ -194,7 +224,6 @@ export function loadProfiles(): ProfileItem[] {
   const stored = readJson<StoredProfileRecord[]>(profilesFile(), []);
 
   const result: ProfileItem[] = [];
-  let colorIdx = 0;
 
   for (const k of kernels) {
     const kernelProfileRoot = path.join(pBaseDir, k.id);
@@ -202,28 +231,33 @@ export function loadProfiles(): ProfileItem[] {
       mkdirSync(kernelProfileRoot, { recursive: true });
     }
 
-    // 1. 每个内核必有对应的默认 Profile
-    const defaultId = `${k.id}::default`;
-    const defaultRecord = stored.find((s) => s.id === defaultId);
-    const defaultDir = path.join(kernelProfileRoot, "default");
-    if (!existsSync(defaultDir)) {
-      mkdirSync(defaultDir, { recursive: true });
-    }
+    // 指纹型内核不自动创建默认 Profile：每个 Profile 都有自己的指纹，必须由用户显式新建
+    const fingerprintKernel = getProvider(k.providerId).capabilities.fingerprint;
 
-    const defaultName = defaultRecord?.name || "默认 Profile";
-    const defaultUsageCount = tasks.filter((t) => t.kernelId === k.id && t.profileId === defaultId).length;
-    result.push({
-      id: defaultId,
-      name: defaultName,
-      initial: defaultName.slice(0, 1).toUpperCase(),
-      hue: defaultRecord?.hue || PROFILE_COLORS[colorIdx++ % PROFILE_COLORS.length]!,
-      kernelId: k.id,
-      kernel: k.name,
-      isDefault: true,
-      usage: defaultUsageCount > 0 ? `${defaultUsageCount} 个任务在用` : "未使用",
-      size: getFolderSize(defaultDir),
-      dir: defaultDir,
-    });
+    // 1. 每个普通内核必有对应的默认 Profile
+    const defaultId = `${k.id}::default`;
+    if (!fingerprintKernel) {
+      const defaultRecord = stored.find((s) => s.id === defaultId);
+      const defaultDir = path.join(kernelProfileRoot, "default");
+      if (!existsSync(defaultDir)) {
+        mkdirSync(defaultDir, { recursive: true });
+      }
+
+      const defaultName = defaultRecord?.name || "默认 Profile";
+      const defaultUsageCount = tasks.filter((t) => t.kernelId === k.id && t.profileId === defaultId).length;
+      result.push({
+        id: defaultId,
+        name: defaultName,
+        initial: defaultName.slice(0, 1).toUpperCase(),
+        kernelId: k.id,
+        kernel: k.name,
+        providerId: k.providerId,
+        isDefault: true,
+        usage: defaultUsageCount > 0 ? `${defaultUsageCount} 个任务在用` : "未使用",
+        size: getFolderSize(defaultDir),
+        dir: defaultDir,
+      });
+    }
 
     // 2. 该内核下用户创建的自定义 Profile
     const customRecords = stored.filter((s) => s.kernelId === k.id && !s.isDefault && s.id !== defaultId);
@@ -238,9 +272,10 @@ export function loadProfiles(): ProfileItem[] {
         id: rec.id,
         name: rec.name,
         initial: rec.name.slice(0, 1).toUpperCase(),
-        hue: rec.hue || PROFILE_COLORS[colorIdx++ % PROFILE_COLORS.length]!,
         kernelId: k.id,
         kernel: k.name,
+        providerId: rec.providerId ?? k.providerId,
+        ...(rec.fingerprint ? { fingerprint: rec.fingerprint } : {}),
         isDefault: false,
         usage: usageCount > 0 ? `${usageCount} 个任务在用` : "未使用",
         size: getFolderSize(customDir),
@@ -252,10 +287,17 @@ export function loadProfiles(): ProfileItem[] {
   return result;
 }
 
+/** 自动新建 Profile 时用的名称：当前时间 */
+export function formatProfileStamp(d: Date = new Date()): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
 /**
- * 为指定浏览器内核新建一个对应的 Profile
+ * 为指定浏览器内核新建一个对应的 Profile。
+ * 具体的初始化交给内核对应的 provider：指纹型浏览器会在这里生成并保存指纹。
  */
-export function createProfileForKernel(kernelId: string, name: string): ProfileItem {
+export async function createProfileForKernel(kernelId: string, name: string): Promise<ProfileItem> {
   ensureDir();
   const kernels = getKernelsListRaw();
   const targetKernel = kernels.find((k) => k.id === kernelId || k.name === kernelId) || kernels[0];
@@ -263,19 +305,36 @@ export function createProfileForKernel(kernelId: string, name: string): ProfileI
     throw new Error("未找到指定的浏览器内核");
   }
 
-  const cleanName = name.trim() || "新 Profile";
-  const dirName = `profile-${Date.now()}`;
+  const cleanName = name.trim() || formatProfileStamp();
+  // 加随机后缀，避免同一毫秒内创建多个 Profile 时 id 和目录冲突
+  const dirName = `profile-${Date.now()}-${randomBytes(3).toString("hex")}`;
   const id = `${targetKernel.id}::${dirName}`;
   const dir = path.join(getAppBrowserProfilesDir(), targetKernel.id, dirName);
   mkdirSync(dir, { recursive: true });
 
   const stored = readJson<StoredProfileRecord[]>(profilesFile(), []);
-  const hue = PROFILE_COLORS[stored.length % PROFILE_COLORS.length]!;
+  const provider = getProvider(targetKernel.providerId);
+  let spec;
+  try {
+    spec = await provider.createProfile({
+      name: cleanName,
+      dir,
+      // 同一 provider 下已有的指纹，用来避免重复
+      existing: stored
+        .filter((s) => (s.providerId ?? "chromium") === provider.id)
+        .map((s) => ({ ...(s.fingerprint ? { fingerprint: s.fingerprint } : {}) })),
+    });
+  } catch (err) {
+    rmSync(dir, { recursive: true, force: true });
+    throw err;
+  }
+
   stored.push({
     id,
     name: cleanName,
-    hue,
     kernelId: targetKernel.id,
+    providerId: provider.id,
+    ...(spec.fingerprint ? { fingerprint: spec.fingerprint } : {}),
     dirName,
     isDefault: false,
   });
@@ -285,9 +344,10 @@ export function createProfileForKernel(kernelId: string, name: string): ProfileI
     id,
     name: cleanName,
     initial: cleanName.slice(0, 1).toUpperCase(),
-    hue,
     kernelId: targetKernel.id,
     kernel: targetKernel.name,
+    providerId: provider.id,
+    ...(spec.fingerprint ? { fingerprint: spec.fingerprint } : {}),
     isDefault: false,
     usage: "未使用",
     size: getFolderSize(dir),
@@ -341,42 +401,72 @@ export function removeProfileById(id: string) {
   }
 }
 
-/**
- * 根据传入的内核标识与 Profile 标识，解析出准确的内核与对应的 Profile
- */
-export function resolveKernelAndProfile(
-  kernelIdOrName?: string,
-  profileIdOrName?: string,
-): { kernel: KernelItem; profile: ProfileItem } {
+function resolveKernel(kernelIdOrName?: string): KernelItem {
   const kernels = getKernelsList();
   if (kernels.length === 0) {
     throw new Error("未检测到任何已安装的 Chromium 内核浏览器");
   }
 
   const defaultKernel = kernels.find((k) => k.isDefault) || kernels[0]!;
-  const kernel =
+  return (
     (kernelIdOrName &&
       kernels.find(
         (k) =>
           k.id === kernelIdOrName ||
           k.name === kernelIdOrName ||
-          k.path === kernelIdOrName ||
           k.name.toLowerCase() === kernelIdOrName.toLowerCase(),
       )) ||
-    defaultKernel;
+    defaultKernel
+  );
+}
 
-  const profiles = loadProfiles();
-  const kernelProfiles = profiles.filter((p) => p.kernelId === kernel.id);
-  const defaultProfile = kernelProfiles.find((p) => p.isDefault) || kernelProfiles[0];
+function findProfile(kernel: KernelItem, profileIdOrName?: string): ProfileItem | undefined {
+  const kernelProfiles = loadProfiles().filter((p) => p.kernelId === kernel.id);
+  return (
+    (profileIdOrName && kernelProfiles.find((p) => p.id === profileIdOrName || p.name === profileIdOrName)) ||
+    kernelProfiles.find((p) => p.isDefault) ||
+    kernelProfiles[0]
+  );
+}
 
-  if (!defaultProfile) {
-    throw new Error(`未找到内核「${kernel.name}」对应的 Profile`);
+/**
+ * 保存任务时使用：解析内核，Profile 可能还不存在（指纹型内核没有默认 Profile），
+ * 此时返回 undefined，等任务真正执行时再自动创建。
+ */
+export function resolveKernelAndOptionalProfile(
+  kernelIdOrName?: string,
+  profileIdOrName?: string,
+): { kernel: KernelItem; profile: ProfileItem | undefined } {
+  const kernel = resolveKernel(kernelIdOrName);
+  return { kernel, profile: findProfile(kernel, profileIdOrName) };
+}
+
+/**
+ * 根据传入的内核标识与 Profile 标识，解析出准确的内核与对应的 Profile。
+ * 内核下没有任何 Profile 时抛错（手动打开 / 测试连接用）。
+ */
+export function resolveKernelAndProfile(
+  kernelIdOrName?: string,
+  profileIdOrName?: string,
+): { kernel: KernelItem; profile: ProfileItem } {
+  const { kernel, profile } = resolveKernelAndOptionalProfile(kernelIdOrName, profileIdOrName);
+  if (!profile) {
+    throw new Error(`内核「${kernel.name}」下还没有 Profile。任务执行时会自动创建，也可以先到 Profile 页新建一个。`);
   }
-
-  const profile =
-    (profileIdOrName &&
-      kernelProfiles.find((p) => p.id === profileIdOrName || p.name === profileIdOrName)) ||
-    defaultProfile;
-
   return { kernel, profile };
+}
+
+/**
+ * 任务执行时使用：内核下没有可用 Profile、或指定 forceNew 时，自动新建一个 Profile。
+ */
+export async function resolveOrCreateProfile(
+  kernelIdOrName: string | undefined,
+  profileIdOrName: string | undefined,
+  newProfileName: string,
+  forceNew = false,
+): Promise<{ kernel: KernelItem; profile: ProfileItem; created: boolean }> {
+  const { kernel, profile } = resolveKernelAndOptionalProfile(kernelIdOrName, profileIdOrName);
+  if (profile && !forceNew) return { kernel, profile, created: false };
+  const createdProfile = await createProfileForKernel(kernel.id, newProfileName);
+  return { kernel, profile: createdProfile, created: true };
 }

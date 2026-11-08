@@ -1,8 +1,17 @@
-import { BrowserWindow, app, clipboard, ipcMain, nativeImage, nativeTheme, shell } from "electron";
+import { BrowserWindow, app, clipboard, dialog, ipcMain, nativeImage, nativeTheme, shell } from "electron";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { AgentSession, createProvider } from "@agent-browser/agent";
-import { findBrowser, startBrowserSession, type BrowserSession } from "@agent-browser/bridge";
+import {
+  LicenseRequiredError,
+  ProfileInUseError,
+  getProvider,
+  terminateProfileBrowser,
+  initProviders,
+  isManagedProvider,
+  startBrowserSession,
+  type BrowserSession,
+} from "@agent-browser/bridge";
 import {
   activeProviderConfig,
   applyUpdate,
@@ -12,26 +21,34 @@ import {
   type StoredSettings,
 } from "./settings.ts";
 import {
+  AUTO_PROFILE_LABEL,
   IPC,
+  errorMessage,
   type AppState,
+  type BrowserActionResult,
   type BrowserStatus,
   type ProfileItem,
   type SettingsUpdate,
   type TaskItem,
+  type ThemeMode,
   type UiEvent,
 } from "./shared.ts";
 import {
   createProfileForKernel,
+  getAppBrowserProfilesDir,
   getKernelsList,
   loadProfiles,
   loadRuns,
   loadTasks,
   removeProfileById,
+  resolveKernelAndOptionalProfile,
   resolveKernelAndProfile,
   saveDefaultKernel,
+  saveRuns,
   saveTasks,
   updateProfileMeta,
 } from "./storage.ts";
+import { Scheduler } from "./scheduler.ts";
 import { TaskRunner } from "./task-runner.ts";
 
 /** 获取浏览器扩展的构建产物目录 */
@@ -53,6 +70,17 @@ let browser: BrowserSession | null = null;
 let browserStatus: BrowserStatus = "stopped";
 let browserError: string | undefined;
 let taskRunner: TaskRunner;
+let scheduler: Scheduler;
+
+/** 内核下载安装的运行时状态（不持久化） */
+interface KernelRuntime {
+  installing?: boolean;
+  fraction?: number;
+  message?: string;
+  error?: string;
+  claimUrl?: string;
+}
+const kernelRuntime = new Map<string, KernelRuntime>();
 
 /** 主进程向渲染窗口推送 UI 事件 */
 function emit(e: UiEvent) {
@@ -61,35 +89,35 @@ function emit(e: UiEvent) {
 
 /** 组装发送给渲染进程的当前应用状态 */
 function state(): AppState {
-  const browserLabel = browser
-    ? `${browser.browser.browser.name || browser.browser.browser.kind} (${browser.browser.profile || "Default"})`
-    : undefined;
-
   const tasks = loadTasks();
   const runs = loadRuns();
-  const kernels = getKernelsList();
+  const kernels = getKernelsList().map((k) => {
+    const rt = kernelRuntime.get(k.id);
+    if (!rt) return k;
+    return {
+      ...k,
+      ...(rt.installing ? { installing: true } : {}),
+      ...(rt.fraction !== undefined ? { progress: rt.fraction } : {}),
+      ...(rt.message ? { progressText: rt.message } : {}),
+      ...(rt.error ? { installError: rt.error } : {}),
+      ...(rt.claimUrl ? { claimUrl: rt.claimUrl } : {}),
+    };
+  });
   const profiles = loadProfiles();
   const activeRun = taskRunner?.getActiveRun() || undefined;
-
-  const nextScheduledTask = tasks.find((t) => t.mode === "cron");
 
   return {
     browser: browserStatus,
     ...(browserError ? { browserError } : {}),
-    ...(browserLabel ? { browserInfo: browserLabel } : {}),
     provider: view(settings, settings.provider),
     providers: { anthropic: view(settings, "anthropic"), "openai-compatible": view(settings, "openai-compatible") },
     running: taskRunner?.isRunning() ?? false,
+    queued: scheduler?.queued() ?? [],
     tasks,
     runs,
     kernels,
     profiles,
     activeRun,
-    scheduler: {
-      running: true,
-      nextTime: nextScheduledTask ? nextScheduledTask.schedule || "已就绪" : "未配置定时任务",
-      nextTask: nextScheduledTask ? nextScheduledTask.name : "暂无等待任务",
-    },
   };
 }
 
@@ -97,10 +125,46 @@ function state(): AppState {
 const pushState = () => emit({ type: "state", state: state() });
 
 /** 根据当前配置与指定浏览器会话创建 Agent 实例 */
-function createAgentForSession(session: BrowserSession): AgentSession {
+function createAgentForSession(session: BrowserSession, opts: { maxSteps?: number }): AgentSession {
   const config = activeProviderConfig(settings);
   if (typeof config === "string") throw new Error(config);
-  return new AgentSession({ bridge: session.bridge, provider: createProvider(config) });
+  return new AgentSession({
+    bridge: session.bridge,
+    provider: createProvider(config),
+    // macOS TCC 式文件授权：Agent 通过 file_upload 读取本地文件前先询问用户。
+    // 「总是允许」只对本任务本次运行生效（每个 Agent 实例一套授权记忆）。
+    allowFile: makeFilePermissionGate(),
+    // 任务里设置的最大步数；没设置就用 Agent 自己的安全上限
+    ...(opts.maxSteps ? { maxSteps: opts.maxSteps } : {}),
+  });
+}
+
+/** 创建一次运行范围内的文件读取授权回调 */
+function makeFilePermissionGate(): (absolutePath: string) => Promise<boolean> {
+  const alwaysAllowed = new Set<string>();
+  return async (absolutePath: string) => {
+    if (alwaysAllowed.has(absolutePath)) return true;
+    const choice = await dialog.showMessageBox({
+      type: "question",
+      title: "Agent 请求读取本地文件",
+      message: "Agent 想读取这个文件并上传到网页：",
+      detail: absolutePath,
+      buttons: ["允许一次", "总是允许", "拒绝"],
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true,
+    });
+    if (choice.response === 1) alwaysAllowed.add(absolutePath);
+    const allowed = choice.response !== 2;
+    emit({
+      type: "notice",
+      message: allowed
+        ? `已允许读取 ${path.basename(absolutePath)}`
+        : `已拒绝读取 ${path.basename(absolutePath)}，Agent 收到「不允许」的回复`,
+      ...(!allowed ? { isError: true } : {}),
+    });
+    return allowed;
+  };
 }
 
 /** 安全关闭当前运行的浏览器会话 */
@@ -122,16 +186,16 @@ async function startBrowser(
   initialUrl?: string,
 ): Promise<BrowserSession> {
   const { kernel, profile } = resolveKernelAndProfile(targetKernel, targetProfile);
-  const executable = findBrowser(kernel.path) || findBrowser(kernel.id);
-  if (!executable) {
-    throw new Error(`未找到选定的 Chromium 浏览器（${kernel.name}）。`);
+  const provider = getProvider(profile.providerId || kernel.providerId);
+  // 内核必须由 App 下载安装；不会去使用系统里已有的浏览器
+  const installedKernel = isManagedProvider(provider) ? provider.installed() : undefined;
+  if (!installedKernel) {
+    throw new Error(`「${kernel.name}」内核尚未安装，请先在「浏览器内核」页下载。`);
   }
 
   if (browser && browserStatus === "connected") {
-    const curExecutablePath = browser.browser.browser.path;
-    const curUserDataDir = browser.browser.userDataDir;
-    // 如果当前正在运行的内核路径与 Profile 数据目录完全一致，直接复用
-    if (curExecutablePath === executable.path && curUserDataDir === profile.dir) {
+    // 如果当前正在运行的内核与 Profile 数据目录完全一致，直接复用
+    if (browser.browser.kernelId === kernel.id && browser.browser.userDataDir === profile.dir) {
       return browser;
     }
     // 否则先安全关闭当前实例再启动目标内核与 Profile
@@ -155,7 +219,9 @@ async function startBrowser(
     const session = await startBrowserSession({
       extensionDir: dir,
       dataDir: path.join(app.getPath("userData"), "browser"),
-      browser: executable,
+      provider,
+      kernel: installedKernel,
+      ...(profile.fingerprint ? { fingerprint: profile.fingerprint } : {}),
       userDataDir: profile.dir,
       profile: profile.id,
       ...(initialUrl ? { initialUrl } : {}),
@@ -178,7 +244,7 @@ async function startBrowser(
       }
     });
 
-    session.browser.process.once("exit", () => {
+    session.browser.onExit(() => {
       if (browser === session) {
         browserStatus = "stopped";
         browser = null;
@@ -191,7 +257,7 @@ async function startBrowser(
   } catch (err) {
     browser = null;
     browserStatus = "error";
-    browserError = err instanceof Error ? err.message : String(err);
+    browserError = errorMessage(err);
     pushState();
     throw err instanceof Error ? err : new Error(String(err));
   }
@@ -212,9 +278,11 @@ function registerIpc() {
   // 任务管理 IPC
   ipcMain.handle(IPC.saveTask, (_e, taskData: Partial<TaskItem>) => {
     const tasks = loadTasks();
-    const { kernel, profile } = resolveKernelAndProfile(
+    // 自动模式或 Profile 还不存在时，留到任务执行时再自动创建
+    const autoProfile = !!taskData.autoProfile;
+    const { kernel, profile } = resolveKernelAndOptionalProfile(
       taskData.kernelId || taskData.kernel,
-      taskData.profileId || taskData.profile,
+      autoProfile ? undefined : taskData.profileId || taskData.profile,
     );
 
     if (taskData.id) {
@@ -225,8 +293,10 @@ function registerIpc() {
           ...taskData,
           kernelId: kernel.id,
           kernel: kernel.name,
-          profileId: profile.id,
-          profile: profile.name,
+          autoProfile,
+          profileId: autoProfile ? "" : (profile?.id ?? ""),
+          profile: autoProfile ? AUTO_PROFILE_LABEL : (profile?.name ?? ""),
+          lastScheduledAt: Date.now(),
           updatedAt: Date.now(),
         } as TaskItem;
         taskData = tasks[idx]!;
@@ -240,8 +310,9 @@ function registerIpc() {
         doneCondition: taskData.doneCondition || "",
         kernelId: kernel.id,
         kernel: kernel.name,
-        profileId: profile.id,
-        profile: profile.name,
+        autoProfile,
+        profileId: autoProfile ? "" : (profile?.id ?? ""),
+        profile: autoProfile ? AUTO_PROFILE_LABEL : (profile?.name ?? ""),
         autoClose: taskData.autoClose ?? true,
         mode: taskData.mode || "now",
         schedule: taskData.schedule || "手动",
@@ -254,7 +325,7 @@ function registerIpc() {
         lastStatus: "none",
         lastRunTime: "—",
         lastDuration: "—",
-        createdAt: Date.now(),
+        lastScheduledAt: Date.now(),
         updatedAt: Date.now(),
       };
       tasks.unshift(newTask);
@@ -271,9 +342,38 @@ function registerIpc() {
     pushState();
   });
 
+  // 删除运行记录（正在执行的那次每步都会落盘，这里跳过它，否则下一步又会被写回来）
+  ipcMain.handle(IPC.deleteRuns, (_e, ids: string[]) => {
+    const activeId = taskRunner?.getActiveRun()?.id;
+    const targets = new Set(Array.isArray(ids) ? ids.filter((x) => typeof x === "string" && x !== activeId) : []);
+    if (targets.size === 0) return 0;
+    const runs = loadRuns();
+    const kept = runs.filter((r) => !targets.has(r.id));
+    const removed = runs.length - kept.length;
+    if (removed > 0) {
+      saveRuns(kept);
+      pushState();
+    }
+    return removed;
+  });
+
   // 执行与停止任务
   ipcMain.handle(IPC.runTask, (_e, id: string) => {
-    void taskRunner.runTask(id);
+    taskRunner.runTask(id).catch((err) => emit({ type: "notice", message: errorMessage(err), isError: true }));
+    return state();
+  });
+
+  // 运行中给 Agent 补充指令（不打断当前步骤）
+  ipcMain.handle(IPC.interject, (_e, text: string) => taskRunner.interject(typeof text === "string" ? text : ""));
+
+  // 从失败的运行记录重试：带上失败原因与最后页面继续
+  ipcMain.handle(IPC.retryRun, (_e, runId: string) => {
+    const run = loadRuns().find((r) => r.id === runId && r.status !== "run");
+    if (!run) throw new Error(`未找到可重试的运行记录 #${runId}`);
+    if (!run.taskId) throw new Error("这条运行记录没有关联的任务，无法重试。");
+    taskRunner
+      .runTask(run.taskId, "失败重试", run)
+      .catch((err) => emit({ type: "notice", message: errorMessage(err), isError: true }));
     return state();
   });
 
@@ -283,8 +383,8 @@ function registerIpc() {
   });
 
   // Profile 管理 IPC
-  ipcMain.handle(IPC.createProfile, (_e, kernelId: string, name: string) => {
-    const created = createProfileForKernel(kernelId, name);
+  ipcMain.handle(IPC.createProfile, async (_e, kernelId: string, name: string) => {
+    const created = await createProfileForKernel(kernelId, name);
     pushState();
     return created;
   });
@@ -300,7 +400,16 @@ function registerIpc() {
   });
 
   // 手动打开指定浏览器内核与对应的 Profile
-  ipcMain.handle(IPC.openBrowser, async (_e, kernelId: string, profileId?: string, url?: string) => {
+  ipcMain.handle(IPC.releaseProfile, async (_e, pid: number) => {
+    try {
+      await terminateProfileBrowser(pid, getAppBrowserProfilesDir());
+      return { ok: true, message: "已关闭占用该 Profile 的浏览器" };
+    } catch (err) {
+      return { ok: false, message: errorMessage(err) };
+    }
+  });
+
+  ipcMain.handle(IPC.openBrowser, async (_e, kernelId: string, profileId?: string, url?: string): Promise<BrowserActionResult> => {
     try {
       const { kernel, profile } = resolveKernelAndProfile(kernelId, profileId);
       await startBrowser(kernel.id, profile.id, url);
@@ -311,13 +420,14 @@ function registerIpc() {
     } catch (err) {
       return {
         ok: false,
-        message: err instanceof Error ? err.message : String(err),
+        message: errorMessage(err),
+        ...(err instanceof ProfileInUseError ? { lockedPid: err.pid } : {}),
       };
     }
   });
 
   // 测试指定浏览器内核与对应的 Profile
-  ipcMain.handle(IPC.testBrowser, async (_e, kernelId: string, profileId?: string) => {
+  ipcMain.handle(IPC.testBrowser, async (_e, kernelId: string, profileId?: string): Promise<BrowserActionResult> => {
     try {
       const { kernel, profile } = resolveKernelAndProfile(kernelId, profileId);
       const session = await startBrowser(kernel.id, profile.id);
@@ -335,7 +445,8 @@ function registerIpc() {
     } catch (err) {
       return {
         ok: false,
-        message: `测试失败：${err instanceof Error ? err.message : String(err)}`,
+        message: `测试失败：${errorMessage(err)}`,
+        ...(err instanceof ProfileInUseError ? { lockedPid: err.pid } : {}),
       };
     }
   });
@@ -355,10 +466,75 @@ function registerIpc() {
     pushState();
   });
 
-  ipcMain.handle(IPC.rescanKernels, () => {
-    const kernels = getKernelsList();
+  // 下载安装内核
+  ipcMain.handle(IPC.installKernel, async (_e, kernelId: string) => {
+    const provider = getProvider(kernelId);
+    if (!isManagedProvider(provider)) return { ok: false, message: "该内核不支持由 App 安装。" };
+    if (kernelRuntime.get(kernelId)?.installing) return { ok: false, message: "正在安装中，请稍候。" };
+
+    kernelRuntime.set(kernelId, { installing: true });
     pushState();
-    return kernels;
+    try {
+      const k = await provider.install((p) => {
+        kernelRuntime.set(kernelId, {
+          installing: true,
+          ...(p.fraction !== undefined ? { fraction: p.fraction } : {}),
+          ...(p.message ? { message: p.message } : {}),
+        });
+        emit({
+          type: "kernel_progress",
+          kernelId,
+          ...(p.fraction !== undefined ? { fraction: p.fraction } : {}),
+          ...(p.message ? { message: p.message } : {}),
+        });
+      });
+      kernelRuntime.delete(kernelId);
+      pushState();
+      return { ok: true, message: `「${provider.label}」${k.version ? ` ${k.version}` : ""} 已安装` };
+    } catch (err) {
+      const message = errorMessage(err);
+      kernelRuntime.set(kernelId, {
+        error: message,
+        ...(err instanceof LicenseRequiredError ? { claimUrl: err.claimUrl } : {}),
+      });
+      pushState();
+      return { ok: false, message };
+    }
+  });
+
+  // 卸载内核（若正被当前浏览器使用则先关闭）
+  ipcMain.handle(IPC.uninstallKernel, async (_e, kernelId: string) => {
+    const provider = getProvider(kernelId);
+    if (!isManagedProvider(provider)) return { ok: false, message: "该内核不支持由 App 卸载。" };
+    if (kernelRuntime.get(kernelId)?.installing) return { ok: false, message: "正在安装中，无法卸载。" };
+    try {
+      if (browser?.browser.kernelId === kernelId) await closeCurrentBrowser();
+      await provider.uninstall();
+      kernelRuntime.delete(kernelId);
+      pushState();
+      return { ok: true, message: `「${provider.label}」已卸载（Profile 数据已保留）` };
+    } catch (err) {
+      return { ok: false, message: errorMessage(err) };
+    }
+  });
+
+  // 保存内核授权 key
+  ipcMain.handle(IPC.saveKernelLicense, async (_e, kernelId: string, key: string) => {
+    const provider = getProvider(kernelId);
+    if (!isManagedProvider(provider) || !provider.license) return { ok: false, message: "该内核不需要授权 key。" };
+    try {
+      await provider.license.saveKey(key);
+      kernelRuntime.delete(kernelId);
+      pushState();
+      return { ok: true, message: "授权 key 已保存，可以下载内核了" };
+    } catch (err) {
+      return { ok: false, message: errorMessage(err) };
+    }
+  });
+
+  // 用系统浏览器打开外部链接（仅限 https）
+  ipcMain.handle(IPC.openExternal, async (_e, url: string) => {
+    if (typeof url === "string" && /^https:\/\//.test(url)) await shell.openExternal(url);
   });
 
   // 剪贴板工具
@@ -368,10 +544,10 @@ function registerIpc() {
   });
 
   // 主题模式控制
-  ipcMain.handle(IPC.setTheme, (_e, theme: "dark" | "light" | "system") => {
+  ipcMain.handle(IPC.setTheme, (_e, theme: ThemeMode) => {
     nativeTheme.themeSource = theme;
-    if (window) {
-      window.setBackgroundColor(nativeTheme.shouldUseDarkColors ? "#0F1113" : "#F6F8FA");
+    if (window && process.platform !== "darwin") {
+      window.setBackgroundColor(nativeTheme.shouldUseDarkColors ? "#0f0f11" : "#fbfbfa");
     }
   });
 }
@@ -379,6 +555,7 @@ function registerIpc() {
 /** 创建主应用窗口 */
 function createWindow() {
   const iconPath = appIconPath();
+  const isMac = process.platform === "darwin";
   window = new BrowserWindow({
     width: 1440,
     height: 920,
@@ -386,9 +563,15 @@ function createWindow() {
     minHeight: 680,
     title: "Agent 任务台",
     ...(existsSync(iconPath) ? { icon: iconPath } : {}),
-    backgroundColor: nativeTheme.shouldUseDarkColors ? "#191919" : "#FAFAFA",
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#0f0f11" : "#fbfbfa",
     titleBarStyle: "hiddenInset",
     trafficLightPosition: { x: 18, y: 18 },
+    ...(isMac
+      ? {
+          vibrancy: "sidebar",
+          visualEffectState: "active",
+        }
+      : {}),
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -412,21 +595,43 @@ app.whenReady().then(() => {
   }
 
   settings = loadSettings();
+  initProviders({ kernelsDir: path.join(app.getPath("userData"), "kernels") });
 
   taskRunner = new TaskRunner(
     emit,
     state,
     (kernelId, profileId, initialUrl) => startBrowser(kernelId, profileId, initialUrl),
     () => closeCurrentBrowser(),
-    (bSession) => createAgentForSession(bSession),
+    (bSession, opts) => createAgentForSession(bSession, opts),
   );
+
+  taskRunner.recoverInterruptedRuns();
+
+  scheduler = new Scheduler({
+    loadTasks,
+    saveTasks,
+    isBusy: () => taskRunner.isRunning(),
+    run: (taskId) => taskRunner.runTask(taskId, "定时触发"),
+    notify: (message, isError) => emit({ type: "notice", message, ...(isError ? { isError: true } : {}) }),
+    onQueueChange: pushState,
+  });
+  taskRunner.onIdle = () => scheduler.pump();
+  scheduler.start();
 
   registerIpc();
   createWindow();
-
 });
 
-app.on("window-all-closed", () => app.quit());
+// macOS 习惯：关掉窗口不退出，应用留在后台，定时任务才能继续运行；⌘Q 才真正退出。
+// 其他系统上关窗口就是退出。
+app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") app.quit();
+});
+
+// 窗口被关掉后，点 Dock 图标把它重新打开
+app.on("activate", () => {
+  if (BrowserWindow.getAllWindows().length === 0) createWindow();
+});
 
 let quitting = false;
 app.on("before-quit", (event) => {

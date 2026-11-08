@@ -37,10 +37,6 @@ export function loadSettings(): StoredSettings {
   try {
     raw = JSON.parse(readFileSync(file(), "utf8"));
   } catch {}
-  if (!raw.anthropic && !raw.openai) {
-    const { model, effort, apiKey } = raw;
-    raw = { provider: "anthropic", anthropic: { model, effort, apiKey }, openai: {} };
-  }
   return {
     provider: raw.provider ?? "anthropic",
     anthropic: raw.anthropic ?? {},

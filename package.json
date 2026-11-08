@@ -9,7 +9,8 @@
     "build:extension": "pnpm --filter @agent-browser/extension run build",
     "typecheck": "pnpm -r run typecheck",
     "cli": "pnpm --filter @agent-browser/agent run cli",
-    "dev": "pnpm --filter @agent-browser/desktop run dev"
+    "dev": "pnpm --filter @agent-browser/desktop run dev",
+    "test": "tsx apps/desktop/src/scheduler.test.ts && tsx apps/desktop/src/run-stop.test.ts"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",

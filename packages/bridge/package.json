@@ -13,6 +13,9 @@
   },
   "dependencies": {
     "@agent-browser/protocol": "workspace:*",
+    "cloakbrowser": "^0.7.1",
+    "extract-zip": "^2.0.1",
+    "playwright-core": "^1.65.0",
     "ws": "^8.22.1"
   },
   "devDependencies": {

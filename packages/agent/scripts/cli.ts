@@ -10,13 +10,15 @@
  *   pnpm cli --provider openai --base-url http://127.0.0.1:11434/v1 --model qwen3-vl "task"
  *   key from --api-key or OPENAI_API_KEY; --find-model <id>; --no-vision for text-only models
  * Other: --profile <browser profile name>
+ * Browser: uses the Chromium installed under .agent-browser-data/kernels (install it from the desktop app),
+ *   or an explicit executable via AGENT_BROWSER_CHROME=/path/to/chrome-for-testing. System browsers are not scanned.
  * During a run, Ctrl+C cancels it; at the prompt, Ctrl+C or "exit" quits.
  */
 import { createInterface } from "node:readline/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { startBrowserSession } from "@agent-browser/bridge";
+import { getProvider, initProviders, isManagedProvider, startBrowserSession } from "@agent-browser/bridge";
 import { AgentSession, createProvider, type AgentEvent, type Effort, type ProviderConfig } from "../src/index.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -94,12 +96,24 @@ function providerConfig(): ProviderConfig {
 
 async function main() {
   const config = providerConfig(); // fail on bad flags before launching the browser
+  initProviders({ kernelsDir: path.join(root, ".agent-browser-data/kernels") });
+  const chromium = getProvider("chromium");
+  const explicit = process.env.AGENT_BROWSER_CHROME;
+  const kernel = explicit
+    ? { id: "chromium", name: "Chromium", path: explicit }
+    : isManagedProvider(chromium)
+      ? chromium.installed()
+      : undefined;
+  if (!kernel) {
+    throw new Error("未找到 Chromium 内核：请先在桌面应用的「浏览器内核」页下载，或设置 AGENT_BROWSER_CHROME 指向可执行文件。");
+  }
   const session = await startBrowserSession({
     extensionDir: path.join(root, "packages/extension/dist"),
     dataDir: path.join(root, ".agent-browser-data"),
     profile: values.profile!,
+    kernel,
   });
-  console.log(dim(`browser connected (${session.browser.browser.kind}); profile "${values.profile}"`));
+  console.log(dim(`browser connected (${session.browser.label}); profile "${values.profile}"`));
   session.bridge.on("log", (level: string, msg: string) => level !== "info" && console.log(dim(`[extension ${level}] ${msg}`)));
 
   const agent = new AgentSession({ bridge: session.bridge, provider: createProvider(config) });
