@@ -398,7 +398,7 @@ svg.icon {
 /* ============================================================
    运行详情
    ============================================================ */
-.back { display: inline-flex; align-items: center; gap: 4px; margin: 0 0 14px -4px; padding: 2px 6px 2px 2px; border: 0; border-radius: 6px; background: none; color: var(--text-2); }
+.back { display: inline-flex; flex: none; align-items: center; gap: 4px; white-space: nowrap; margin: 0 0 14px -4px; padding: 2px 6px 2px 2px; border: 0; border-radius: 6px; background: none; color: var(--text-2); }
 .back:hover { background: var(--hover); color: var(--text); }
 .live-head .back { margin: 0 -4px 0 -4px; }
 .head-actions { display: flex; align-items: center; gap: 8px; }
@@ -568,9 +568,11 @@ svg.icon {
    ============================================================ */
 .live { display: grid; grid-template-rows: auto minmax(0, 1fr); height: 100%; }
 .live-head { display: flex; align-items: center; gap: 14px; padding: 22px 32px 18px; border-bottom: 1px solid var(--line); }
-.live-head h1 { font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
-.live-status { display: flex; align-items: center; gap: 8px; color: var(--text-2); }
-.live-head .btn { margin-left: auto; }
+.live-head h1 { flex: 1 1 0; min-width: 4em; overflow: hidden; font-size: 16px; font-weight: 600; letter-spacing: -0.01em; text-overflow: ellipsis; white-space: nowrap; }
+/* 返回和按钮不许被挤压换行；窗口窄时标题先省略，状态（可能带长 Profile 名）最后才省略 */
+.live-head .back, .live-head .btn { flex: none; white-space: nowrap; }
+.live-status { display: flex; flex: 0 1 auto; align-items: center; gap: 8px; min-width: 0; color: var(--text-2); white-space: nowrap; }
+.live-status-text { overflow: hidden; text-overflow: ellipsis; }
 .btn-quiet-danger { color: var(--err); }
 .btn-quiet-danger:hover { background: color-mix(in srgb, var(--err) 8%, transparent); }
 

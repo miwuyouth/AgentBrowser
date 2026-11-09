@@ -164,10 +164,12 @@ export function LiveView({ state, go }: { state: AppState; go: Navigate }) {
     <div class="live">
       <header class="live-head">
         <BackButton />
-        <h1>{run.name}</h1>
+        <h1 title={run.name}>{run.name}</h1>
         <span class="live-status">
           <i class="dot run" />
-          运行中{run.batch && <> · {run.profileName} {run.batch.index}/{run.batch.total}</>} · {elapsed} · {steps.length} 步
+          <span class="live-status-text">
+            运行中{run.batch && <> · {run.profileName} {run.batch.index}/{run.batch.total}</>} · {elapsed} · {steps.length} 步
+          </span>
         </span>
         <button type="button" class="btn btn-quiet-danger" disabled={cancelling} onClick={cancel}>
           {cancelling ? "正在终止…" : run.batch ? "终止这一轮" : "终止"}

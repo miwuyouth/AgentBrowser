@@ -251,6 +251,12 @@ export function describeStep(step: RunStep): StepView {
     };
   }
 
+  // 启动步骤：主句只说启动了哪个内核，Profile 名（常是长邮箱）放到下面的灰字里
+  const boot = /^(后台)?启动「(.+?)」，加载对应 Profile「(.+)」$/.exec(step.text.trim());
+  if (boot) {
+    return { label: `${boot[1] ?? ""}启动 ${boot[2]}`, target: `Profile：${boot[3]}`, internal: false };
+  }
+
   // 无法识别工具名的纯描述文字（如「启动浏览器…」）整句作为目标，避免标签与目标重复
   if (!tool) {
     return { label: "", target: clip(step.text.trim(), 60), internal: false };
