@@ -170,6 +170,10 @@ svg.icon {
 .page-head { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 28px; }
 .page-title { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.25; }
 .page-desc { margin-top: 4px; color: var(--text-2); }
+/* 说明行末尾的文字链接（如「全部结果 ›」）：是跳转不是操作，所以不做成按钮 */
+.desc-link { display: inline-flex; align-items: center; gap: 2px; margin-left: 12px; padding: 0; border: 0; background: none; color: var(--text); font-size: inherit; font-weight: 500; cursor: pointer; }
+.desc-link svg { color: var(--text-3); transition: transform 0.12s ease; }
+.desc-link:hover svg { color: var(--text); transform: translateX(2px); }
 
 /* ============================================================
    通用组件
@@ -685,3 +689,51 @@ svg.icon {
 .btn-danger { border-color: transparent; background: var(--err); color: #fff; }
 .btn-danger:hover { background: color-mix(in srgb, var(--err) 88%, #000); }
 .btn:focus-visible { outline: 2px solid color-mix(in srgb, var(--text) 40%, transparent); outline-offset: 2px; }
+
+/* ============================================================
+   结果表格：一次运行一行、一个字段一列（任务的「表格」视图、一轮页）
+   ============================================================ */
+.seg { display: inline-flex; padding: 2px; border-radius: 8px; background: var(--active); }
+.seg button { height: 24px; padding: 0 12px; border: 0; border-radius: 6px; background: none; color: var(--text-2); font-size: 12.5px; cursor: pointer; transition: background 0.12s ease, color 0.12s ease; }
+.seg button:hover { color: var(--text); }
+.seg button.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(20, 20, 20, 0.08); }
+
+.rt-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.rt-bar-title { flex: 1; margin: 0; }
+.rt-count { margin-left: auto; color: var(--text-3); font-size: 12px; }
+.rt-select select, .task-select select { width: auto; min-width: 150px; max-width: 220px; }
+.rt-note { margin-top: 10px; color: var(--text-3); font-size: 12px; }
+
+/* 外框；右边还有列没显示时，右边缘一道淡淡的渐隐 */
+.rt-wrap { position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow); }
+.rt-wrap::after { content: ""; position: absolute; top: 0; right: 0; bottom: 0; z-index: 4; width: 36px; pointer-events: none; background: linear-gradient(to right, transparent, var(--surface)); opacity: 0; transition: opacity 0.15s ease; }
+.rt-wrap.more-right::after { opacity: 1; }
+
+/* 只有表格自己滚动（横向 + 纵向），页面标题和按钮始终可见 */
+.rt-scroll { max-height: calc(100vh - 250px); min-height: 120px; overflow: auto; }
+:root[data-theme="dark"] .rt-scroll { color-scheme: dark; }
+.rt { min-width: 100%; border-collapse: separate; border-spacing: 0; font-variant-numeric: tabular-nums; }
+.rt th, .rt td { height: 40px; padding: 0 16px; border-bottom: 1px solid var(--line); background: var(--surface); text-align: left; white-space: nowrap; }
+.rt .num { text-align: right; }
+.rt th { position: sticky; top: 0; z-index: 2; height: 36px; color: var(--text-3); font-size: 12px; font-weight: 500; }
+
+/* 单元格内容只显示一行，超长截断；宽度上下限在这里（表格单元格本身的 max-width 不生效） */
+.rt-c { min-width: 64px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+.rt .num .rt-c { max-width: 140px; margin-left: auto; }
+.rt-empty { color: var(--text-3); }
+
+/* 第一列（时间 / Profile）横向滑动时固定在左边 */
+.rt .rt-first { position: sticky; left: 0; z-index: 1; box-shadow: inset -1px 0 0 var(--line); }
+.rt th.rt-first { z-index: 3; }
+.rt-first-in { display: flex; align-items: center; gap: 8px; font-weight: 500; }
+.rt-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.rt-first-in .dot { width: 6px; height: 6px; }
+
+/* 多 Profile 的轮次标题行：文字横向滑动时同样固定在左边 */
+.rt-group td { height: 30px; padding: 0; background: var(--bg); color: var(--text-3); font-size: 12px; font-weight: 500; }
+.rt-group td > span { position: sticky; left: 0; display: inline-block; padding: 0 16px; }
+
+.rt-row { cursor: pointer; outline: 0; }
+.rt-row:hover td { background-image: linear-gradient(var(--hover), var(--hover)); }
+.rt-row:focus-visible td { background-image: linear-gradient(var(--active), var(--active)); }
+.rt tbody:last-child tr:last-child td { border-bottom: 0; }

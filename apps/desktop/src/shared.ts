@@ -157,6 +157,8 @@ export interface RunSummary {
   profileName?: string;
   /** 属于哪一轮：任务选了多个 Profile 时才有；只跑一个 Profile 的运行没有这一项 */
   batch?: RunBatch;
+  /** 这次运行提交的结果字段（键为字段名）；任务定义了结果字段且有提交时才有，供「表格」视图与导出 CSV 直接读取 */
+  data?: Record<string, string | number | null>;
 }
 
 /** 一轮运行里的位置信息：同一轮的每条运行记录 id 相同 */
@@ -426,6 +428,8 @@ export interface AgentApi {
   deleteRuns(ids: string[]): Promise<number>;
   /** 按需读取单次运行的完整明细记录（含步骤与截图） */
   getRun(id: string): Promise<RunRecord | null>;
+  /** 弹出系统「存储」对话框把 CSV 文本存成文件；用户取消返回 null，否则返回保存路径 */
+  saveCsv(defaultName: string, content: string): Promise<string | null>;
   /** 中止当前正在运行的任务 */
   cancelTask(): Promise<void>;
   /** 为指定内核新建 Profile */
@@ -582,6 +586,7 @@ export const IPC = {
   retryBatch: "runs:retry-batch",
   deleteRuns: "runs:delete",
   getRun: "runs:get",
+  saveCsv: "runs:save-csv",
   cancelTask: "agent:cancel-task",
   createProfile: "profiles:create",
   saveProfile: "profiles:save",

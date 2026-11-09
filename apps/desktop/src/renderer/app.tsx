@@ -15,6 +15,7 @@ import { EditorView } from "./views/editor-view.tsx";
 import { LiveView } from "./views/live-view.tsx";
 import { BatchView } from "./views/batch-view.tsx";
 import { RunDetailView } from "./views/run-detail-view.tsx";
+import { ResultsView } from "./views/results-view.tsx";
 import { RunsView } from "./views/runs-view.tsx";
 import { TasksView } from "./views/tasks-view.tsx";
 
@@ -27,9 +28,12 @@ type Route = { view: View; id?: string };
 /** 导航历史最多记多少页，防止来回点击无限增长 */
 const HISTORY_LIMIT = 50;
 
-/** 顶级页面（侧边栏直达）：跳到这里时清空历史，它们也不显示返回按钮 */
+/**
+ * 顶级页面（侧边栏直达）：跳到这里时清空历史，它们也不显示返回按钮。
+ * 「结果」带不带任务 ID 都算顶级页：换任务用页面上的下拉框，不需要返回。
+ */
 function isTopLevel(r: Route): boolean {
-  return (r.view === "tasks" || r.view === "runs" || r.view === "env") && !r.id;
+  return r.view === "results" || ((r.view === "tasks" || r.view === "runs" || r.view === "env") && !r.id);
 }
 
 /**
@@ -58,6 +62,8 @@ function routeLabel(r: Route): string {
       return "任务";
     case "runs":
       return "运行记录";
+    case "results":
+      return "结果";
     case "env":
       return "运行环境";
     case "editor":
@@ -194,6 +200,7 @@ function Main() {
         {view === "tasks" && <TasksView state={state} go={go} onOpenSettings={() => setSettingsTab("model")} />}
         {view === "editor" && <EditorView key={id ?? "new"} state={state} taskId={id} go={go} />}
         {view === "runs" && <RunsView state={state} taskId={id} go={go} />}
+        {view === "results" && <ResultsView key={id ?? ""} state={state} taskId={id} go={go} />}
         {view === "run" && <RunDetailView key={id} state={state} runId={id} go={go} />}
         {view === "batch" && <BatchView key={id} state={state} batchId={id} go={go} />}
         {view === "live" && <LiveView state={state} go={go} />}

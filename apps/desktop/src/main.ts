@@ -5,6 +5,7 @@ import {
   Tray,
   app,
   clipboard,
+  dialog,
   ipcMain,
   nativeImage,
   nativeTheme,
@@ -14,6 +15,7 @@ import {
   shell,
 } from "electron";
 import { existsSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { AgentSession, createProvider } from "@agent-browser/agent";
@@ -830,6 +832,17 @@ function registerIpc() {
   // 读取一次运行的完整记录（列表只带摘要，详情页按需来取）
   ipcMain.handle(IPC.getRun, (_e, id: string) => getRunStore().get(typeof id === "string" ? id : ""));
 
+  // 导出 CSV：弹出系统存储对话框，用户选好位置后写入；取消返回 null
+  ipcMain.handle(IPC.saveCsv, async (_e, defaultName: string, content: string) => {
+    if (typeof content !== "string") throw new Error("导出内容无效。");
+    const name = (typeof defaultName === "string" ? defaultName : "").replace(/[\\/:*?"<>|]/g, "_") || "结果.csv";
+    const opts = { defaultPath: path.join(app.getPath("downloads"), name), filters: [{ name: "CSV", extensions: ["csv"] }] };
+    const res = window ? await dialog.showSaveDialog(window, opts) : await dialog.showSaveDialog(opts);
+    if (res.canceled || !res.filePath) return null;
+    await writeFile(res.filePath, content, "utf8");
+    return res.filePath;
+  });
+
   // 执行与停止任务
   ipcMain.handle(IPC.runTask, (_e, id: string) => {
     taskRunner.runTask(id).catch((err) => emit({ type: "notice", message: errorMessage(err), isError: true }));
@@ -1126,6 +1139,7 @@ app.whenReady().then(() => {
   );
 
   taskRunner.recoverInterruptedRuns();
+  getRunStore().backfillData();
   pruneRuns();
   setInterval(pruneRuns, 60 * 60 * 1000);
 

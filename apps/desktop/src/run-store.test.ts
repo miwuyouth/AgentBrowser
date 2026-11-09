@@ -69,6 +69,27 @@ test("按开始时间倒序排", (store) => {
   store.save(run("late", { startTime: 2000 }), { index: true });
   assert.deepEqual(store.list().map((s) => s.id), ["late", "early"]);
 });
+test("摘要带上结果字段值；文字结果不带", (store) => {
+  const fields = [{ id: "f1", name: "温度", type: "number" as const }];
+  store.save(run("a", { status: "ok", result: { kind: "form", data: { 温度: 18 }, fields } }), { index: true });
+  store.save(run("b", { status: "ok", startTime: 900, result: { kind: "text", text: "晴" } }), { index: true });
+  const [a, b] = store.list();
+  assert.deepEqual(a!.data, { 温度: 18 });
+  assert.ok(!("data" in b!));
+});
+test("backfillData：给旧索引补上 data，只做一遍", (store, root) => {
+  const fields = [{ id: "f1", name: "温度", type: "number" as const }];
+  store.save(run("a", { status: "ok", result: { kind: "form", data: { 温度: 18 }, fields } }), { index: true });
+  // 模拟旧版本写下的索引：没有 data
+  const idx = path.join(root, "index.json");
+  const old = JSON.parse(readFileSync(idx, "utf8")).map(({ data: _d, ...s }: Record<string, unknown>) => s);
+  writeFileSync(idx, JSON.stringify(old));
+  assert.equal(store.list()[0]!.data, undefined);
+  assert.equal(store.backfillData(), 1);
+  assert.deepEqual(store.list()[0]!.data, { 温度: 18 });
+  writeFileSync(idx, JSON.stringify(old));
+  assert.equal(store.backfillData(), 0, "第二次不再处理");
+});
 test("存截图：存在自己的目录里，文件名就是编号", (store, root) => {
   const file = store.saveShot("a", 3, "image/png", Buffer.from("hello").toString("base64"));
   assert.equal(file, "3.png");

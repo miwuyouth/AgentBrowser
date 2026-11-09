@@ -33,7 +33,8 @@ const EXT: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "
  * 在 `RunStore.save` 且指定 `opts.index: true`（任务开始、结束或中断时）调用。
  *
  * 【作用】
- * 剔除详细步骤列表（steps）、截图引用、以及大段总结文字，仅提取展示历史列表所需的 ID、名称、状态、时间戳、触发方式、所用 Profile 与所属的一轮。
+ * 剔除详细步骤列表（steps）、截图引用、以及大段总结文字，仅提取展示历史列表所需的 ID、名称、状态、时间戳、触发方式、所用 Profile 与所属的一轮；
+ * 结构化结果只留字段值（`data`，通常几十字节），让任务的「表格」视图不用逐个读取 run.json。
  *
  * @param r 完整的运行明细记录
  * @returns 精简后的运行摘要对象
@@ -50,6 +51,7 @@ export function summarize(r: RunRecord): RunSummary {
     ...(r.profileId ? { profileId: r.profileId } : {}),
     ...(r.profileName ? { profileName: r.profileName } : {}),
     ...(r.batch ? { batch: r.batch } : {}),
+    ...(r.result?.kind === "form" ? { data: r.result.data } : {}),
   };
 }
 
@@ -173,6 +175,31 @@ export class RunStore {
       const rest = this.list().filter((s) => s.id !== run.id);
       writeAtomic(this.indexFile(), JSON.stringify([summarize(run), ...rest]));
     }
+  }
+
+  /**
+   * 给旧的索引补上结果字段值（`data`）：这个字段是后加的，之前的摘要里没有。
+   *
+   * 【调用时机】应用启动时调用一次。
+   * 【作用】只做一遍：完成后在根目录留下标记文件，之后直接返回；只读取有关联任务、已结束、还没有 `data` 的记录。
+   *
+   * @returns 补上的条数
+   */
+  backfillData(): number {
+    const marker = path.join(this.root, ".data-backfilled");
+    if (existsSync(marker)) return 0;
+    const all = this.list();
+    let filled = 0;
+    const next = all.map((s) => {
+      if (s.data || !s.taskId || s.status === "run") return s;
+      const full = this.get(s.id);
+      if (full?.result?.kind !== "form") return s;
+      filled += 1;
+      return { ...s, data: full.result.data };
+    });
+    if (filled > 0) writeAtomic(this.indexFile(), JSON.stringify(next));
+    writeFileSync(marker, "");
+    return filled;
   }
 
   /**

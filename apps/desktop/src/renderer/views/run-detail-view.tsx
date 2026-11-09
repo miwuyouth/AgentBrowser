@@ -2,6 +2,7 @@ import { useEffect, useState } from "preact/hooks";
 import type { AppState, RunRecord } from "../../shared.ts";
 import { Icon } from "../icons.tsx";
 import { BackButton, PageHead } from "../page.tsx";
+import { AllResultsLink } from "../result-table.tsx";
 import { Lightbox } from "../lightbox.tsx";
 import { RunLog } from "../run-log.tsx";
 import { ShotGallery } from "../shot-gallery.tsx";
@@ -112,7 +113,15 @@ export function RunDetailView({ state, runId, go }: { state: AppState; runId: st
   return (
     <div class="page">
       <BackButton />
-      <PageHead title={run.name} desc={meta}>
+      <PageHead
+        title={run.name}
+        desc={
+          <>
+            {meta}
+            <AllResultsLink taskId={run.taskId} tasks={state.tasks} go={go} />
+          </>
+        }
+      >
         <span class="head-actions">
           {failed && (
             <button type="button" class="btn btn-primary" disabled={state.running} onClick={retry}>

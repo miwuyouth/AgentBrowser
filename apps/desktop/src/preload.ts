@@ -83,6 +83,11 @@ const api: AgentApi = {
    * 【作用】按需向主进程读取单次运行的完整 JSON 明细（包含全部步骤与截图相对路径）。
    */
   getRun: (id) => ipcRenderer.invoke(IPC.getRun, id),
+  /**
+   * 【调用时机】用户在任务的「表格」视图点「导出 CSV」时调用。
+   * 【作用】由主进程弹出系统存储对话框并写入文件。
+   */
+  saveCsv: (defaultName, content) => ipcRenderer.invoke(IPC.saveCsv, defaultName, content),
 
   /**
    * 【调用时机】用户在实时视图（LiveView）中点击"终止任务"按钮时调用。
