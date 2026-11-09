@@ -80,13 +80,14 @@ export function ResultTable({
                   <div class="rt-c">{f.name}</div>
                 </th>
               ))}
+              <th class="rt-fill" aria-hidden="true" />
             </tr>
           </thead>
           {groups.map((g) => (
             <tbody key={g.id}>
               {groupHeads && (
                 <tr class="rt-group">
-                  <td colSpan={fields.length + 1}>
+                  <td colSpan={fields.length + 2}>
                     <span>{formatDateTime(g.startTime)}</span>
                   </td>
                 </tr>
@@ -118,6 +119,7 @@ export function ResultTable({
                         </td>
                       );
                     })}
+                    <td class="rt-fill" aria-hidden="true" />
                   </tr>
                 );
               })}
@@ -161,19 +163,17 @@ export function AllResultsLink({ taskId, tasks, go }: { taskId: string | undefin
  * @param taskName 任务名（用于默认文件名）
  * @param runs 要导出的运行，按行顺序
  * @param fields 结果字段
- * @param withProfile 是否带 Profile 列
  * @param names 现有 Profile 的 ID → 名称
  */
 export async function exportCsv(
   taskName: string,
   runs: RunSummary[],
   fields: FormField[],
-  withProfile: boolean,
   names: Map<string, string>,
 ) {
   try {
     const day = csvTime(Date.now()).slice(0, 10);
-    const saved = await window.agentApi.saveCsv(`${taskName}-${day}.csv`, toCsv(runs, fields, withProfile, names));
+    const saved = await window.agentApi.saveCsv(`${taskName}-${day}.csv`, toCsv(runs, fields, names));
     if (saved) toast(`已导出 ${runs.length} 行`);
   } catch (err) {
     toast(`导出失败：${errorMessage(err)}`, true);

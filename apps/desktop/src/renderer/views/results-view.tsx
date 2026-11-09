@@ -31,6 +31,7 @@ function defaultTask(tasks: TaskItem[], state: AppState): TaskItem | undefined {
  * 【调用时机】「结果」页选中某个任务后渲染。
  *
  * 【作用】
+ * - 左上角始终是 Profile 下拉框（只有一个 Profile 也一样），界面不随数据多少变样；
  * - 只绑一个 Profile 的任务：第一列是时间；
  * - 多 Profile 任务：默认按轮分组（轮次标题行 + 每个 Profile 一行，顺序固定）；
  *   在下拉框里选某个 Profile 后，去掉分组，一天一行，专门看这个账号的变化；
@@ -46,7 +47,7 @@ function TaskTable({ state, task, go }: { state: AppState; task: TaskItem; go: N
   const options = profileOptions(all, order, names);
   const multi = options.length > 1;
   // 选过的 Profile 在历史里已经没有了（记录被清理）就回到「全部」
-  const picked = multi && options.some((o) => o.key === profile) ? profile : "";
+  const picked = options.some((o) => o.key === profile) ? profile : "";
   const runs = picked ? all.filter((r) => profileKey(r) === picked) : all;
   const groups = groupRounds(runs, order);
   const byRound = multi && !picked;
@@ -68,24 +69,22 @@ function TaskTable({ state, task, go }: { state: AppState; task: TaskItem; go: N
   return (
     <>
       <div class="rt-bar">
-        {multi && (
-          <div class="select-wrap rt-select">
-            <select class="input input-sm" aria-label="只看某个 Profile" value={picked} onChange={(e) => pick(e.currentTarget.value)}>
-              <option value="">全部 Profile</option>
-              {options.map((o) => (
-                <option key={o.key} value={o.key}>
-                  {o.name}
-                </option>
-              ))}
-            </select>
-            <Icon name="chevron" size={13} />
-          </div>
-        )}
+        <div class="select-wrap rt-select">
+          <select class="input input-sm" aria-label="只看某个 Profile" value={picked} onChange={(e) => pick(e.currentTarget.value)}>
+            <option value="">全部 Profile</option>
+            {options.map((o) => (
+              <option key={o.key} value={o.key}>
+                {o.name}
+              </option>
+            ))}
+          </select>
+          <Icon name="chevron" size={13} />
+        </div>
         <span class="rt-count">{runs.length} 行</span>
         <button
           type="button"
           class="btn btn-sm"
-          onClick={() => void exportCsv(task.name, groups.flatMap((g) => g.runs), fields, multi, names)}
+          onClick={() => void exportCsv(task.name, groups.flatMap((g) => g.runs), fields, names)}
         >
           导出 CSV
         </button>
@@ -132,7 +131,7 @@ export function ResultsView({ state, taskId, go }: { state: AppState; taskId: st
               ))}
             </select>
             <Icon name="chevron" size={13} />
-          </div>
+        </div>
         )}
       </PageHead>
 

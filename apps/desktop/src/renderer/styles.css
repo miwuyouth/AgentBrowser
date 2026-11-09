@@ -712,7 +712,7 @@ svg.icon {
 .rt-wrap.more-right::after { opacity: 1; }
 
 /* 只有表格自己滚动（横向 + 纵向），页面标题和按钮始终可见 */
-.rt-scroll { max-height: calc(100vh - 250px); min-height: 120px; overflow: auto; }
+.rt-scroll { max-height: calc(100vh - 250px); overflow: auto; }
 :root[data-theme="dark"] .rt-scroll { color-scheme: dark; }
 .rt { min-width: 100%; border-collapse: separate; border-spacing: 0; font-variant-numeric: tabular-nums; }
 .rt th, .rt td { height: 40px; padding: 0 16px; border-bottom: 1px solid var(--line); background: var(--surface); text-align: left; white-space: nowrap; }
@@ -723,6 +723,8 @@ svg.icon {
 .rt-c { min-width: 64px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
 .rt .num .rt-c { max-width: 140px; margin-left: auto; }
 .rt-empty { color: var(--text-3); }
+/* 列少时把多出来的宽度都给最右边这列空白，数据列按内容收紧、挨着时间列，而不是被拉开到两头 */
+.rt .rt-fill { width: 100%; padding: 0; }
 
 /* 第一列（时间 / Profile）横向滑动时固定在左边 */
 .rt .rt-first { position: sticky; left: 0; z-index: 1; box-shadow: inset -1px 0 0 var(--line); }

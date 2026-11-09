@@ -118,20 +118,20 @@ function csvCell(v: string | number | null): string {
 }
 
 /**
- * 导出 CSV：长格式，一个 Profile 的一次运行一行——`时间, [Profile,] 状态, 字段…`。
+ * 导出 CSV：长格式，一个 Profile 的一次运行一行——`时间, Profile, 状态, 字段…`。
+ * 单 Profile 任务也带 Profile 列，多个任务的 CSV 合在一起时能分清是哪个账号。
  * 开头带 BOM，Excel 打开中文不乱码。
  *
  * @param runs 要导出的运行，按想要的行顺序
  * @param fields 任务的结果字段（列）
- * @param withProfile 是否带 Profile 列（多 Profile 任务）
  * @param names 现有 Profile 的 ID → 名称
  */
-export function toCsv(runs: RunSummary[], fields: FormField[], withProfile: boolean, names: Map<string, string>): string {
-  const head = ["时间", ...(withProfile ? ["Profile"] : []), "状态", ...fields.map((f) => f.name)];
+export function toCsv(runs: RunSummary[], fields: FormField[], names: Map<string, string>): string {
+  const head = ["时间", "Profile", "状态", ...fields.map((f) => f.name)];
   const lines = runs.map((r) =>
     [
       csvTime(r.startTime),
-      ...(withProfile ? [profileLabel(r, names)] : []),
+      profileLabel(r, names),
       r.status === "ok" ? "成功" : "失败",
       ...fields.map((f) => cellValue(r, f)),
     ].map(csvCell),

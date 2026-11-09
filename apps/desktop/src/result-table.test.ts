@@ -81,7 +81,6 @@ test("CSV：BOM + 表头；转义逗号引号换行；公式开头的文字加 '
       run("b", { startTime: t, status: "fail", profileName: "旧号", data: { 温度: null, 天气: "=1+1" } }),
     ],
     fields,
-    true,
     names,
   );
   assert.ok(csv.startsWith("﻿"));
@@ -91,9 +90,11 @@ test("CSV：BOM + 表头；转义逗号引号换行；公式开头的文字加 '
   assert.equal(lines.at(-2), "2026-11-10 08:05,旧号,失败,,'=1+1");
 });
 
-test("CSV：单 Profile 不带 Profile 列", () => {
-  const csv = toCsv([run("a", { data: { 温度: 18, 天气: "晴" } })], fields, false, names);
-  assert.equal(csv.slice(1).split("\r\n")[0], "时间,状态,温度,天气");
+test("CSV：单 Profile 也带 Profile 列", () => {
+  const csv = toCsv([run("a", { profileId: "p1", data: { 温度: 18, 天气: "晴" } })], fields, names);
+  const lines = csv.slice(1).split("\r\n");
+  assert.equal(lines[0], "时间,Profile,状态,温度,天气");
+  assert.equal(lines[1], `${csvTime(1000)},主账号,成功,18,晴`);
 });
 
 console.log(`\n${passed} passed`);

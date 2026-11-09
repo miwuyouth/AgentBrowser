@@ -144,7 +144,7 @@ export function BatchView({ state, batchId, go }: { state: AppState; batchId: st
             <button
               type="button"
               class="btn btn-sm"
-              onClick={() => void exportCsv(batch.name, groups.flatMap((g) => g.runs), fields, true, names)}
+              onClick={() => void exportCsv(batch.name, groups.flatMap((g) => g.runs), fields, names)}
             >
               导出 CSV
             </button>
