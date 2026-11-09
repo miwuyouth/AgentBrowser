@@ -6,39 +6,6 @@ const pad = (n: number) => String(n).padStart(2, "0");
 const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 
 /**
- * 将时间戳格式化为直观的相对时间描述。
- *
- * 【调用时机】
- * 任务列表项展示「上次运行：12 分钟前」、运行记录历史列表展示各条记录启动时间时调用。
- *
- * 【作用】
- * 根据与基准当前时间的差值，依次转换展示为：
- * - 1 分钟内："刚刚"；
- * - 1 小时内："N 分钟前"；
- * - 24 小时内："N 小时前"；
- * - 昨天："昨天 HH:mm"；
- * - 更早：同年显示 "M月d日 HH:mm"，非当年补全 "YYYY年M月d日 HH:mm"。
- *
- * @param ts 待格式化的历史毫秒时间戳
- * @param now 基准时间戳，默认取当前时间 Date.now()
- * @returns 相对时间中文字符串
- */
-export function formatRelative(ts: number, now = Date.now()): string {
-  const minutes = Math.floor((now - ts) / 60000);
-  if (minutes < 1) return "刚刚";
-  if (minutes < 60) return `${minutes} 分钟前`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} 小时前`;
-
-  const d = new Date(ts);
-  const clock = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  const days = Math.round((startOfDay(new Date(now)) - startOfDay(d)) / 86_400_000);
-  if (days === 1) return `昨天 ${clock}`;
-  const sameYear = d.getFullYear() === new Date(now).getFullYear();
-  return `${sameYear ? "" : `${d.getFullYear()}年`}${d.getMonth() + 1}月${d.getDate()}日 ${clock}`;
-}
-
-/**
  * 将时间戳格式化为绝对日期与时钟时间。
  *
  * 【调用时机】
@@ -55,6 +22,16 @@ export function formatDateTime(ts: number, now = Date.now()): string {
   const d = new Date(ts);
   const year = d.getFullYear() === new Date(now).getFullYear() ? "" : `${d.getFullYear()}年`;
   return `${year}${d.getMonth() + 1}月${d.getDate()}日 ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/**
+ * 只取时间戳的时刻，如 "09:12"。
+ *
+ * 【调用时机】运行记录列表里每一行的时间（日期已由所在分组的标题给出）。
+ */
+export function formatTimeOfDay(ts: number): string {
+  const d = new Date(ts);
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 /**

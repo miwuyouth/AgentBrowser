@@ -1,6 +1,9 @@
 import { useState } from "preact/hooks";
 import type { AppState, GeneralSettings, ProviderKind } from "../../shared.ts";
 import { errorMessage } from "../../shared.ts";
+import { groupRuns } from "../../batch.ts";
+import { expiredRunIds, RETENTION_OPTIONS } from "../../run-history.ts";
+import { confirmDialog } from "../confirm.tsx";
 import { Modal } from "../modal.tsx";
 import { toast } from "../toast.tsx";
 
@@ -33,13 +36,69 @@ function keyHint(kind: ProviderKind, credentials: AppState["provider"]["credenti
 /** 设置弹窗的两个标签：通用（开关即时生效）、模型服务（要点保存，保存前会检测） */
 export type SettingsTab = "general" | "model";
 
-type GeneralKey = keyof GeneralSettings;
+/** 通用设置里的开关项（值是布尔的那些） */
+type GeneralKey = { [K in keyof GeneralSettings]: GeneralSettings[K] extends boolean ? K : never }[keyof GeneralSettings];
+
+const retentionLabel = (days: number) => (days > 0 ? `${days} 天` : "永久");
+
+/**
+ * 「运行记录保留」这一行：左边标题 + 说明，右边分段选择 7 天 / 30 天 / 90 天 / 永久。
+ *
+ * 【调用时机】在 GeneralPane 里渲染。
+ * 【作用】选中即生效；改短后会立刻删掉一批旧记录，所以先算出要删几条，有要删的先确认。
+ */
+function RetentionRow({ state }: { state: AppState }) {
+  const [pending, setPending] = useState<number | undefined>();
+  const days = pending ?? state.general.keepRunsDays;
+
+  const choose = async (next: number) => {
+    if (next === days) return;
+    const activeId = state.activeRun?.id;
+    // 和「运行记录」列表的条数一致：同一轮（多 Profile）算一条
+    const expired = new Set(expiredRunIds(state.runs, next, Date.now(), activeId ? [activeId] : []));
+    const count = groupRuns(state.runs.filter((r) => expired.has(r.id))).length;
+    if (
+      count > 0 &&
+      !(await confirmDialog({
+        title: `删除 ${count} 条超过 ${next} 天的运行记录？`,
+        detail: "这些记录的截图也会一起删除，无法恢复。",
+        confirmLabel: "删除",
+        danger: true,
+      }))
+    )
+      return;
+    setPending(next);
+    try {
+      await window.agentApi.saveGeneral({ keepRunsDays: next });
+    } catch (err) {
+      toast(errorMessage(err), true);
+    } finally {
+      setPending(undefined);
+    }
+  };
+
+  return (
+    <div class="switch-row static">
+      <span class="switch-row-text">
+        <b>运行记录保留</b>
+        <small>{days > 0 ? `超过 ${days} 天的记录和截图会自动删除` : "记录一直保留，截图会占用越来越多的磁盘空间"}</small>
+      </span>
+      <div class="seg" role="radiogroup" aria-label="运行记录保留">
+        {RETENTION_OPTIONS.map((d) => (
+          <button key={d} type="button" role="radio" aria-checked={d === days} class={d === days ? "on" : ""} onClick={() => void choose(d)}>
+            {retentionLabel(d)}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 /**
  * 「设置 › 通用」：应用行为开关，拨动即生效，没有保存按钮。
  *
  * 【调用时机】设置弹窗切到「通用」标签时渲染。
- * 【作用】后台常驻、开机启动、任务完成通知、退出前提醒；拨动时先在界面上立即翻转，主进程失败再弹回并提示。
+ * 【作用】后台常驻、开机启动、任务完成通知、退出前提醒、运行记录保留天数；拨动时先在界面上立即翻转，主进程失败再弹回并提示。
  */
 function GeneralPane({ state }: { state: AppState }) {
   const g = state.general;
@@ -85,6 +144,7 @@ function GeneralPane({ state }: { state: AppState }) {
       {row("openAtLogin", "开机时启动", `登录电脑后在${place}里启动，不弹出窗口`, "需要手动打开应用，定时任务才会运行", g.loginItemNote)}
       {row("notifyOnFinish", "任务完成时通知", "成功或失败都发系统通知；正在看这个窗口时不打扰", "只在窗口里提示")}
       {row("quitWarn", "退出前提醒", "有定时任务时，退出前确认一次", "有定时任务也直接退出；有任务在运行时仍会确认")}
+      <RetentionRow state={state} />
     </div>
   );
 }

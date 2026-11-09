@@ -275,6 +275,8 @@ export interface GeneralSettings {
   notifyOnFinish: boolean;
   /** 只有定时任务（没有任务在跑）时，退出前也确认一次；有任务在跑或排队时总会确认 */
   quitWarn: boolean;
+  /** 运行记录保留天数（7 / 30 / 90），0 表示永久；过期的记录连同截图自动删除 */
+  keepRunsDays: number;
 }
 
 /** 发给界面的通用设置视图 */

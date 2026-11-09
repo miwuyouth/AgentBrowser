@@ -71,6 +71,7 @@ import {
   saveTasks,
   updateProfileMeta,
 } from "./storage.ts";
+import { expiredRunIds, isRetentionOption } from "./run-history.ts";
 import { Scheduler } from "./scheduler.ts";
 import { TaskRunner, type AgentRunOptions } from "./task-runner.ts";
 
@@ -266,6 +267,7 @@ function generalView(): GeneralSettingsView {
     keepInBackground: settings.general.keepInBackground,
     notifyOnFinish: settings.general.notifyOnFinish,
     quitWarn: settings.general.quitWarn,
+    keepRunsDays: settings.general.keepRunsDays,
     openAtLogin: note ? false : app.getLoginItemSettings(loginItemQuery()).openAtLogin,
     ...(note ? { loginItemNote: note } : {}),
   };
@@ -282,13 +284,30 @@ function saveGeneral(patch: Partial<GeneralSettings>) {
   if (typeof patch.keepInBackground === "boolean") g.keepInBackground = patch.keepInBackground;
   if (typeof patch.notifyOnFinish === "boolean") g.notifyOnFinish = patch.notifyOnFinish;
   if (typeof patch.quitWarn === "boolean") g.quitWarn = patch.quitWarn;
+  const retentionChanged = isRetentionOption(patch.keepRunsDays) && patch.keepRunsDays !== g.keepRunsDays;
+  if (retentionChanged) g.keepRunsDays = patch.keepRunsDays!;
   if (typeof patch.openAtLogin === "boolean") {
     const note = loginItemNote();
     if (note) throw new Error(`无法设置开机启动：${note}`);
     app.setLoginItemSettings({ openAtLogin: patch.openAtLogin, ...loginItemQuery() });
   }
   saveSettings(settings);
+  // 改了保留天数，立刻按新的天数清理一次
+  if (retentionChanged) pruneRuns();
   pushState();
+}
+
+/**
+ * 删掉超过保留天数的运行记录（连同截图目录）。
+ *
+ * 【调用时机】应用启动时（恢复中断的运行之后）、之后每小时一次、改了保留天数时。
+ * 【作用】正在执行的那次、以及还有在跑的那一轮不删；删了东西才推送新状态。
+ */
+function pruneRuns() {
+  const store = getRunStore();
+  const activeId = taskRunner?.getActiveRun()?.id;
+  const ids = expiredRunIds(store.list(), settings.general.keepRunsDays, Date.now(), activeId ? [activeId] : []);
+  if (ids.length > 0 && store.remove(ids) > 0) pushState();
 }
 
 /** 托盘菜单与退出确认需要的「现在有什么在跑、接下来跑什么」 */
@@ -1107,6 +1126,8 @@ app.whenReady().then(() => {
   );
 
   taskRunner.recoverInterruptedRuns();
+  pruneRuns();
+  setInterval(pruneRuns, 60 * 60 * 1000);
 
   scheduler = new Scheduler({
     loadTasks,

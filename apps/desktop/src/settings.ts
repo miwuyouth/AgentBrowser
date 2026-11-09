@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { DEFAULT_MODEL, type ProviderConfig } from "@agent-browser/agent";
 import type { ProbeTarget } from "./model-probe.ts";
+import { DEFAULT_KEEP_RUNS_DAYS, isRetentionOption } from "./run-history.ts";
 import type { ModelProbeRequest, ProviderKind, ProviderSettingsView, SettingsUpdate } from "./shared.ts";
 
 /** 本地存储的模型服务配置结构 */
@@ -20,12 +21,20 @@ export interface StoredGeneral {
   keepInBackground: boolean;
   notifyOnFinish: boolean;
   quitWarn: boolean;
+  /** 运行记录保留天数，0 表示永久 */
+  keepRunsDays: number;
   /** 第一次关窗口躲进后台时，是否已经发过「仍在后台运行」的提示 */
   closeHintShown: boolean;
 }
 
-/** 通用设置的默认值：留在后台、完成通知、退出提醒都默认打开 */
-const DEFAULT_GENERAL: StoredGeneral = { keepInBackground: true, notifyOnFinish: true, quitWarn: true, closeHintShown: false };
+/** 通用设置的默认值：留在后台、完成通知、退出提醒都默认打开，运行记录保留 30 天 */
+const DEFAULT_GENERAL: StoredGeneral = {
+  keepInBackground: true,
+  notifyOnFinish: true,
+  quitWarn: true,
+  keepRunsDays: DEFAULT_KEEP_RUNS_DAYS,
+  closeHintShown: false,
+};
 
 /** 本地 settings.json 的全量持久化存储数据结构 */
 export interface StoredSettings {
@@ -80,8 +89,10 @@ export function loadSettings(): StoredSettings {
   try {
     raw = JSON.parse(readFileSync(file(), "utf8"));
   } catch {}
+  const general: StoredGeneral = { ...DEFAULT_GENERAL, ...raw.general };
+  if (!isRetentionOption(general.keepRunsDays)) general.keepRunsDays = DEFAULT_KEEP_RUNS_DAYS;
   return {
-    general: { ...DEFAULT_GENERAL, ...raw.general },
+    general,
     provider: raw.provider ?? "anthropic",
     anthropic: raw.anthropic ?? {},
     openai: raw.openai ?? {},

@@ -1,9 +1,10 @@
 import { groupRuns, type BatchInfo } from "../../batch.ts";
+import { groupByDay } from "../../run-history.ts";
 import type { AppState, RunSummary } from "../../shared.ts";
 import { Icon } from "../icons.tsx";
 import { BackButton, PageHead } from "../page.tsx";
 import type { Navigate } from "../sidebar.tsx";
-import { formatRelative } from "../time.ts";
+import { formatTimeOfDay } from "../time.ts";
 
 const STATUS_LABEL = { ok: "成功", run: "运行中", fail: "失败" } as const;
 
@@ -15,7 +16,7 @@ const STATUS_LABEL = { ok: "成功", run: "运行中", fail: "失败" } as const
  *
  * 【作用】
  * 1. 展现运行状态色标小圆点（绿色成功、黄色运行中、红色失败）；
- * 2. 展现任务名称、失败醒目标签与执行相对时间（如"刚刚"、"12分钟前"）；
+ * 2. 展现任务名称、失败醒目标签与开始时刻（如 "09:12"，日期由所在分组的标题给出）；
  * 3. 智能路由分发：点击整行，若该任务仍在运行中（`status === "run"`）则跳转至实时视图（`live`），若已完成/失败则跳转至详情回溯页（`run`）。
  *
  * @param run 运行摘要对象
@@ -37,7 +38,7 @@ function RunRow({ run, go }: { run: RunSummary; go: Navigate }) {
       <i class={`dot ${run.status}`} />
       <span class="row-name">{run.name}</span>
       {run.status === "fail" && <span class="tag-err">失败</span>}
-      <span class="row-meta">{run.status === "run" ? "运行中" : formatRelative(run.startTime)}</span>
+      <span class="row-meta">{run.status === "run" ? "运行中" : formatTimeOfDay(run.startTime)}</span>
       <Icon name="chevron" size={14} />
     </li>
   );
@@ -69,7 +70,7 @@ function BatchRow({ batch, go }: { batch: BatchInfo; go: Navigate }) {
       <span class="row-name">{batch.name}</span>
       <span class="row-kind">{batch.total} 个 Profile</span>
       {batch.fail > 0 && !batch.running && <span class="tag-err">{allFailed ? "失败" : `${batch.fail} 个失败`}</span>}
-      <span class="row-meta">{batch.running ? "运行中" : formatRelative(batch.startTime)}</span>
+      <span class="row-meta">{batch.running ? "运行中" : formatTimeOfDay(batch.startTime)}</span>
       <Icon name="chevron" size={14} />
     </li>
   );
@@ -84,6 +85,8 @@ function BatchRow({ batch, go }: { batch: BatchInfo; go: Navigate }) {
  * 【作用】
  * 1. 展示全局历史运行记录，支持通过可选的 `taskId` 进行单一任务历史筛选；
  * 2. 多 Profile 任务的同一轮合成一行（见 `groupRuns`），显式按执行开始时间倒序排列（最新的在最前）；
+ *    再按天分组（今天 / 昨天 / 11月7日 周五…），日期标题滚动时吸在顶部，行上只写时刻；
+ *    标题下说明保留了多少天（过期的由主进程自动清理，见 `run-history.ts`）；
  * 3. 头部提供任务过滤标签及一键清除过滤按钮；
  * 4. 包含空状态提示。
  *
@@ -101,10 +104,14 @@ export function RunsView({ state, taskId, go }: { state: AppState; taskId: strin
     state.activeBatchId,
   );
 
+  const days = groupByDay(items, Date.now());
+  const keep = state.general.keepRunsDays;
+  const desc = keep > 0 ? `${items.length} 条记录 · 保留最近 ${keep} 天` : `${items.length} 条记录`;
+
   return (
     <div class="page">
       <BackButton />
-      <PageHead title="运行记录" desc={`${items.length} 条记录`}>
+      <PageHead title="运行记录" desc={desc}>
         {task && (
           <span class="filter-tag">
             {task.name}
@@ -121,15 +128,20 @@ export function RunsView({ state, taskId, go }: { state: AppState; taskId: strin
           <p>任务运行后，记录会出现在这里。</p>
         </div>
       ) : (
-        <ul class="list">
-          {items.map((item) =>
-            item.kind === "batch" ? (
-              <BatchRow key={item.batch.id} batch={item.batch} go={go} />
-            ) : (
-              <RunRow key={item.run.id} run={item.run} go={go} />
-            ),
-          )}
-        </ul>
+        days.map((day) => (
+          <section class="day" key={day.key} aria-label={day.label}>
+            <h3 class="day-head">{day.label}</h3>
+            <ul class="list">
+              {day.items.map((item) =>
+                item.kind === "batch" ? (
+                  <BatchRow key={item.batch.id} batch={item.batch} go={go} />
+                ) : (
+                  <RunRow key={item.run.id} run={item.run} go={go} />
+                ),
+              )}
+            </ul>
+          </section>
+        ))
       )}
     </div>
   );
