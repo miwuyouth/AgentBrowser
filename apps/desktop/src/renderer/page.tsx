@@ -1,6 +1,7 @@
 import { createContext, type ComponentChildren } from "preact";
 import { useContext } from "preact/hooks";
 import { Icon } from "./icons.tsx";
+import { shortcut } from "./platform.ts";
 
 /**
  * 通用页面头部标题栏组件。
@@ -49,7 +50,7 @@ export function BackButton() {
   const back = useContext(BackContext);
   if (!back) return null;
   return (
-    <button type="button" class="back" title="返回上一页（⌘[）" onClick={back.onBack}>
+    <button type="button" class="back" title={`返回上一页（${shortcut("[")}）`} onClick={back.onBack}>
       <Icon name="back" size={14} />
       {back.label}
     </button>

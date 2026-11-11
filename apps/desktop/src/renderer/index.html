@@ -13,6 +13,7 @@
         var t = localStorage.getItem("agent_browser_theme") || "system";
         var dark = t === "dark" || (t === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
         document.documentElement.dataset.theme = dark ? "dark" : "light";
+        document.documentElement.dataset.platform = /Mac/i.test(navigator.platform) ? "mac" : "other";
       })();
     </script>
   </head>

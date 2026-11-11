@@ -1,6 +1,7 @@
 import { useState } from "preact/hooks";
 import type { ThemeMode } from "../shared.ts";
 import { Icon, type IconName } from "./icons.tsx";
+import { shortcut } from "./platform.ts";
 import { applyTheme, getTheme, nextTheme } from "./theme.ts";
 
 /** 应用支持的所有顶级或二级工作区视图标识 */
@@ -105,7 +106,7 @@ export function Sidebar({ view, taskCount, onNavigate, onOpenSettings }: Props) 
       <button type="button" class="btn btn-primary btn-block" style="margin-bottom: 22px" onClick={() => onNavigate("editor")}>
         <Icon name="plus" />
         新建任务
-        <kbd>⌘N</kbd>
+        <kbd>{shortcut("N")}</kbd>
       </button>
 
       <div class="nav-group">

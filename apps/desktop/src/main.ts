@@ -158,6 +158,8 @@ let systemShutdown = false;
 const liveNotifications = new Set<Notification>();
 /** Windows 登录项带上这个参数，用来识别「开机自动启动」 */
 const HIDDEN_ARG = "--hidden";
+/** 与 electron-builder.config.cjs 里的 appId 一致；Windows 用它把通知归到本应用 */
+const APP_ID = "com.agentbrowser.desktop";
 
 /** 内核下载安装的实时运行时状态（仅保留在内存中，不持久化） */
 interface KernelRuntime {
@@ -1050,10 +1052,29 @@ function registerIpc() {
   // 主题模式控制
   ipcMain.handle(IPC.setTheme, (_e, theme: ThemeMode) => {
     nativeTheme.themeSource = theme;
-    if (window && process.platform !== "darwin") {
-      window.setBackgroundColor(nativeTheme.shouldUseDarkColors ? "#0f0f11" : "#fbfbfa");
-    }
+    syncWindowTheme();
   });
+}
+
+/** 窗口底色，与界面的 --bg 一致 */
+const windowBackground = () => (nativeTheme.shouldUseDarkColors ? "#0f0f11" : "#fbfbfa");
+
+/** Windows / Linux 右上角系统按钮的配色与高度：底色同内容区，图标同正文色 */
+function titleBarOverlay() {
+  const dark = nativeTheme.shouldUseDarkColors;
+  return { color: windowBackground(), symbolColor: dark ? "#ededef" : "#19191b", height: 36 };
+}
+
+/**
+ * 深浅色变化后同步原生窗口的底色和右上角系统按钮配色。
+ *
+ * 【调用时机】用户切换主题、系统外观变化（跟随系统时）。
+ * 【作用】macOS 的毛玻璃和红绿灯由系统自己处理，不用管。
+ */
+function syncWindowTheme() {
+  if (!window || isMac) return;
+  window.setBackgroundColor(windowBackground());
+  window.setTitleBarOverlay(titleBarOverlay());
 }
 
 /**
@@ -1076,15 +1097,19 @@ function createWindow({ show = true }: { show?: boolean } = {}) {
     minHeight: 680,
     title: "Agent 任务台",
     ...(existsSync(iconPath) ? { icon: iconPath } : {}),
-    backgroundColor: nativeTheme.shouldUseDarkColors ? "#0f0f11" : "#fbfbfa",
-    titleBarStyle: "hiddenInset",
-    trafficLightPosition: { x: 18, y: 18 },
+    backgroundColor: windowBackground(),
     ...(isMac
       ? {
+          titleBarStyle: "hiddenInset",
+          trafficLightPosition: { x: 18, y: 18 },
           vibrancy: "sidebar",
           visualEffectState: "active",
         }
-      : {}),
+      : {
+          // Windows / Linux：去掉系统标题栏，但保留系统的最小化、最大化、关闭按钮，叠在内容右上角
+          titleBarStyle: "hidden",
+          titleBarOverlay: titleBarOverlay(),
+        }),
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -1119,6 +1144,11 @@ app.on("second-instance", () => {
 app.whenReady().then(() => {
   if (!isPrimaryInstance) return;
   app.setName("Agent 任务台");
+  // Windows 上系统通知要靠 AppUserModelID 认应用，不设的话通知常常不显示；须与打包配置里的 appId 一致
+  if (process.platform === "win32") app.setAppUserModelId(APP_ID);
+  // Windows / Linux 不要 Electron 默认的 File / Edit / View 菜单栏（也就关掉了正式版里的 Ctrl+Shift+I 开发者工具）
+  if (!isMac) Menu.setApplicationMenu(null);
+  nativeTheme.on("updated", syncWindowTheme);
 
   // 自定义截图协议处理句柄：shot://run/<runId>/<file>
   protocol.handle("shot", (request) => {

@@ -5,7 +5,7 @@ import { promisify } from "node:util";
 import extract from "extract-zip";
 import { cftPlatform, downloadFile, resolveStableRelease } from "./cft.ts";
 import { prepareExtension } from "./extension.ts";
-import { assertProfileFree } from "./profile-lock.ts";
+import { assertProfileFree, stopBrowserProcess } from "./profile-lock.ts";
 import type {
   CreateProfileInput,
   InstallProgress,
@@ -21,7 +21,7 @@ const INSTALL_FILE = "install.json";
 
 function describeEarlyExit(code: number | null): string {
   if (code === 21) {
-    return `浏览器启动失败并闪退（错误码 21：Profile In Use / 目录权限受阻）。macOS 系统隐私策略拦截了向系统 Chrome 目录写入单例锁（SingletonLock），或已有浏览器实例占用；请在设置中将数据模式切换为「独立隔离目录」，或改用 Chrome for Testing / Chromium。`;
+    return `浏览器启动失败并闪退（错误码 21：Profile 被占用或目录没有写入权限）。可能已有浏览器实例在用这个 Profile，或系统权限拦截了向数据目录写入单例锁；请先关掉占用它的浏览器窗口再试。`;
   }
   if (code === 0) {
     return `浏览器退出（code 0）。该浏览器可能已在后台运行并拦截了新窗口，请先完全退出该浏览器再试。`;
@@ -88,7 +88,9 @@ export class ChromiumProvider implements ManagedProvider {
       if (!existsSync(exe)) throw new Error("解压后没有找到浏览器可执行文件。");
 
       onProgress?.({ phase: "verify", message: "正在校验…" });
-      await execFileAsync(exe, ["--version"], { timeout: 15_000 });
+      // Windows 的 chrome.exe 是窗口程序，不支持 --version（不会输出版本号，反而会打开一个浏览器窗口），
+      // 所以只在 macOS / Linux 上跑一下确认能执行；Windows 上前面已确认可执行文件存在
+      if (process.platform !== "win32") await execFileAsync(exe, ["--version"], { timeout: 15_000 });
 
       // 解压成功才替换：先移到正式目录，再写入安装信息
       const finalDir = path.join(this.root, release.version);
@@ -168,6 +170,12 @@ export class ChromiumProvider implements ManagedProvider {
       describeEarlyExit,
       async close() {
         if (child.exitCode !== null) return;
+        // Windows 上 child.kill 等于强杀，会丢 Cookie / 会话；改为先请窗口正常关闭，超时再强制结束
+        if (process.platform === "win32" && child.pid !== undefined) {
+          await stopBrowserProcess(child.pid);
+          await Promise.race([exited, new Promise((r) => setTimeout(r, 3_000))]);
+          return;
+        }
         child.kill("SIGTERM");
         const timer = setTimeout(() => child.kill("SIGKILL"), 5_000);
         await exited;

@@ -9,33 +9,9 @@
     "build": "node scripts/build.mjs",
     "dev": "node scripts/build.mjs && electron .",
     "typecheck": "tsc -p .",
-    "package": "electron-builder --dir",
-    "dist": "electron-builder"
-  },
-  "build": {
-    "appId": "com.agentbrowser.desktop",
-    "productName": "Agent Browser",
-    "directories": {
-      "output": "release"
-    },
-    "electronDist": "node_modules/electron/dist",
-    "files": [
-      "dist/**/*"
-    ],
-    "extraResources": [
-      {
-        "from": "../../packages/extension/dist",
-        "to": "extension"
-      }
-    ],
-    "mac": {
-      "icon": "assets/icon.icns",
-      "target": [
-        "dir",
-        "dmg"
-      ],
-      "category": "public.app-category.productivity"
-    }
+    "package": "electron-builder --dir --config electron-builder.config.cjs",
+    "dist": "electron-builder --config electron-builder.config.cjs",
+    "dist:win": "electron-builder --win --config electron-builder.config.cjs"
   },
   "dependencies": {
     "@agent-browser/agent": "workspace:*",
